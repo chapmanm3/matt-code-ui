@@ -204,10 +204,8 @@ html, body {
 .tab-bar {
   display: flex;
   align-items: flex-end;
-  gap: 0;
   overflow-x: auto;
   flex: 1;
-  border-bottom: none;
 }
 
 .tab {
@@ -229,11 +227,11 @@ html, body {
   background-color: #ffffff0f;
 }
 
-.tab.active {
+.tab.active,
+.tab.active:hover {
   color: #e0e0e0;
   border-bottom: 2px solid #ffffff;
   font-weight: 500;
-  background: none;
 }
 
 .tab-name {
