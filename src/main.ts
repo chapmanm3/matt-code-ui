@@ -17,11 +17,17 @@ interface FileEntry {
   is_file: boolean;
 }
 
+interface NeovimSpawnResult {
+  session_id: string;
+  socket_path: string;
+}
+
 interface TerminalTab {
   id: string;
   sessionId: string | null;
   name: string;
   isNeovim: boolean;
+  nvimSocketPath: string | null;
   terminal: Terminal | null;
   fitAddon: FitAddon | null;
   unlistenData: UnlistenFn | null;
@@ -129,12 +135,7 @@ async function switchTab(tabId: string) {
   updateStatusBar();
 }
 
-async function initializeTab(tab: TerminalTab) {
-  const terminalEl = document.getElementById("terminal");
-  if (!terminalEl || !tab.id) return;
-
-  terminalEl.innerHTML = "";
-
+function makeTerminal(): { terminal: Terminal; fitAddon: FitAddon } {
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
@@ -146,9 +147,40 @@ async function initializeTab(tab: TerminalTab) {
     },
     convertEol: true,
   });
-
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
+  return { terminal, fitAddon };
+}
+
+function wireTerminalInput(tab: TerminalTab, terminal: Terminal) {
+  terminal.onData(async (data) => {
+    if (tab.sessionId) {
+      try {
+        await invoke("write_to_terminal", { sessionId: tab.sessionId, data });
+      } catch (error) {
+        console.error("Write error:", error);
+      }
+    }
+  });
+
+  terminal.onResize(async ({ rows, cols }) => {
+    if (tab.sessionId) {
+      try {
+        await invoke("resize_terminal", { sessionId: tab.sessionId, rows, cols });
+      } catch (error) {
+        console.error("Resize error:", error);
+      }
+    }
+  });
+}
+
+async function initializeTab(tab: TerminalTab) {
+  const terminalEl = document.getElementById("terminal");
+  if (!terminalEl || !tab.id) return;
+
+  terminalEl.innerHTML = "";
+
+  const { terminal, fitAddon } = makeTerminal();
   terminal.open(terminalEl);
   fitAddon.fit();
 
@@ -195,28 +227,61 @@ async function initializeTab(tab: TerminalTab) {
     tab.unlistenData = unlistenData;
     tab.unlistenExit = unlistenExit;
 
-    terminal.onData(async (data) => {
-      if (tab.sessionId) {
-        try {
-          await invoke("write_to_terminal", { sessionId: tab.sessionId, data });
-        } catch (error) {
-          console.error("Write error:", error);
-        }
-      }
-    });
-
-    terminal.onResize(async ({ rows, cols }) => {
-      if (tab.sessionId) {
-        try {
-          await invoke("resize_terminal", { sessionId: tab.sessionId, rows, cols });
-        } catch (error) {
-          console.error("Resize error:", error);
-        }
-      }
-    });
+    wireTerminalInput(tab, terminal);
 
   } catch (error) {
     terminal.writeln(`\x1b[31mError starting terminal: ${error}\x1b[0m`);
+  }
+}
+
+async function initializeNeovimTab(tab: TerminalTab, filePath?: string) {
+  const terminalEl = document.getElementById("terminal");
+  if (!terminalEl) return;
+
+  terminalEl.innerHTML = "";
+
+  const { terminal, fitAddon } = makeTerminal();
+  terminal.open(terminalEl);
+  fitAddon.fit();
+
+  tab.terminal = terminal;
+  tab.fitAddon = fitAddon;
+  tab.rowCount = terminal.rows;
+  tab.colCount = terminal.cols;
+  tab.isInitialized = true;
+
+  try {
+    const result = await invoke<NeovimSpawnResult>("spawn_neovim", {
+      cwd: currentPath || null,
+      rows: tab.rowCount,
+      cols: tab.colCount,
+      filePath: filePath ?? null,
+    });
+
+    tab.sessionId = result.session_id;
+    tab.nvimSocketPath = result.socket_path;
+
+    const unlistenData = await listen(`terminal-data-${result.session_id}`, (event) => {
+      terminal.write(event.payload as string);
+    });
+
+    const unlistenExit = await listen(`terminal-exited-${result.session_id}`, () => {
+      terminal.writeln("\r\n[Neovim exited]");
+      const tabStillExists = tabs.some(t => t.id === tab.id);
+      if (tabStillExists && tabs.length > 1) {
+        setTimeout(() => {
+          if (tabs.some(t => t.id === tab.id)) closeTab(tab.id);
+        }, 500);
+      }
+    });
+
+    tab.unlistenData = unlistenData;
+    tab.unlistenExit = unlistenExit;
+
+    wireTerminalInput(tab, terminal);
+
+  } catch (error) {
+    terminal.writeln(`\x1b[31mError starting Neovim: ${error}\x1b[0m`);
   }
 }
 
@@ -289,13 +354,13 @@ function updateStatusBar() {
   if (!statusInfo) return;
 
   if (tab?.isNeovim) {
-    statusInfo.textContent = "nvim - :tabe for new file, :tabn/:tabp navigate, :q close";
+    statusInfo.textContent = "nvim — click files to open | :tabn/:tabp navigate | :q close";
   } else {
     statusInfo.textContent = "Terminal - Ctrl+C interrupt, Ctrl+D exit";
   }
 }
 
-async function createTab(isNeovim: boolean = false, filePath?: string) {
+async function createTab(isNeovim: boolean = false) {
   const container = document.getElementById("terminal-container");
   const mainContent = document.getElementById("main-content");
 
@@ -313,6 +378,7 @@ async function createTab(isNeovim: boolean = false, filePath?: string) {
     sessionId: null,
     name: tabName,
     isNeovim,
+    nvimSocketPath: null,
     terminal: null,
     fitAddon: null,
     unlistenData: null,
@@ -329,40 +395,89 @@ async function createTab(isNeovim: boolean = false, filePath?: string) {
 
   await initializeTab(newTab);
 
-  if (isNeovim && filePath && newTab.sessionId) {
-    const normalizedPath = filePath.replace(/\\/g, "/");
-    await invoke("write_to_terminal", {
-      sessionId: newTab.sessionId,
-      data: `nvim ${normalizedPath}\r`,
-    });
-  }
-
   renderActiveTerminal();
   updateStatusBar();
 }
 
+async function createNeovimTab(filePath?: string): Promise<TerminalTab> {
+  const container = document.getElementById("terminal-container");
+  const mainContent = document.getElementById("main-content");
+
+  container?.classList.remove("collapsed");
+  container?.classList.add("full-height");
+  if (mainContent) mainContent.style.display = "none";
+  const toggleBtn = document.getElementById("toggle-terminal");
+  if (toggleBtn) toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
+
+  const tabId = `tab-${crypto.randomUUID()}`;
+  const tabName = `nvim ${nextTabIndex++}`;
+
+  const newTab: TerminalTab = {
+    id: tabId,
+    sessionId: null,
+    name: tabName,
+    isNeovim: true,
+    nvimSocketPath: null,
+    terminal: null,
+    fitAddon: null,
+    unlistenData: null,
+    unlistenExit: null,
+    rowCount: 24,
+    colCount: 80,
+    isActive: false,
+    isInitialized: false,
+  };
+
+  tabs.push(newTab);
+  activeTabId = tabId;
+  renderTabBar();
+
+  await initializeNeovimTab(newTab, filePath);
+
+  renderActiveTerminal();
+  updateStatusBar();
+
+  return newTab;
+}
+
 async function openInNeovim(filePath: string) {
-  const activeTab = getActiveTab();
-  
   const normalizedPath = filePath.replace(/\\/g, "/");
-  
-  if (activeTab?.isNeovim && activeTab.sessionId) {
-    await invoke("write_to_terminal", {
-      sessionId: activeTab.sessionId,
-      data: `:tabe ${normalizedPath}\r`,
-    });
-  } else {
-    const existingNeovimTab = tabs.find(t => t.isNeovim && t.sessionId && t.id !== activeTabId);
-    if (existingNeovimTab && existingNeovimTab.sessionId) {
-      await switchTab(existingNeovimTab.id);
-      await invoke("write_to_terminal", {
-        sessionId: existingNeovimTab.sessionId,
-        data: `:tabe ${normalizedPath}\r`,
+  const activeTab = getActiveTab();
+
+  // Active tab is a neovim tab with a live socket — use RPC
+  if (activeTab?.isNeovim && activeTab.nvimSocketPath) {
+    try {
+      await invoke("nvim_open_file", {
+        socketPath: activeTab.nvimSocketPath,
+        filePath: normalizedPath,
       });
-    } else {
-      await createTab(true, filePath);
+      return;
+    } catch (error) {
+      console.error("nvim_open_file failed:", error);
+      activeTab.nvimSocketPath = null; // clear stale socket, fall through
     }
   }
+
+  // Another neovim tab exists with a live socket — switch and use RPC
+  const existingNeovimTab = tabs.find(
+    t => t.isNeovim && t.nvimSocketPath && t.id !== activeTabId
+  );
+  if (existingNeovimTab?.nvimSocketPath) {
+    await switchTab(existingNeovimTab.id);
+    try {
+      await invoke("nvim_open_file", {
+        socketPath: existingNeovimTab.nvimSocketPath,
+        filePath: normalizedPath,
+      });
+      return;
+    } catch (error) {
+      console.error("nvim_open_file failed:", error);
+      existingNeovimTab.nvimSocketPath = null; // clear stale socket, fall through
+    }
+  }
+
+  // No neovim tab — spawn one; file path goes directly to nvim as a CLI arg
+  await createNeovimTab(normalizedPath);
 }
 
 async function initFirstTab() {
@@ -414,7 +529,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     window.addEventListener("keydown", async (e) => {
       if (e.altKey || e.metaKey) {
         const currentIndex = tabs.findIndex(t => t.id === activeTabId);
-        
+
         switch (e.key) {
           case "Tab":
             e.preventDefault();
