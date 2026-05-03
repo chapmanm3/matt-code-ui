@@ -1,5 +1,8 @@
+use async_trait::async_trait;
+use nvim_rs::{create::tokio as nvim_create, Handler, Neovim};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -8,6 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
+use tokio_util::compat::Compat;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -17,9 +21,16 @@ pub struct FileEntry {
     pub is_file: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct NeovimSpawnResult {
+    pub session_id: String,
+    pub socket_path: String,
+}
+
 struct TerminalSession {
     master: Box<dyn MasterPty + Send>,
     writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    socket_path: Option<String>,
 }
 
 #[derive(Default)]
@@ -29,6 +40,75 @@ pub struct TerminalState {
 }
 
 pub type TerminalStateHandle = Arc<Mutex<TerminalState>>;
+
+// Minimal no-op handler — we only send commands, never receive notifications
+#[derive(Clone)]
+struct NvimHandler;
+
+#[async_trait]
+impl Handler for NvimHandler {
+    type Writer = Compat<tokio::net::unix::OwnedWriteHalf>;
+
+    async fn handle_request(
+        &self,
+        _name: String,
+        _args: Vec<Value>,
+        _neovim: Neovim<Self::Writer>,
+    ) -> Result<Value, Value> {
+        Err(Value::from("not implemented"))
+    }
+
+    async fn handle_notify(
+        &self,
+        _name: String,
+        _args: Vec<Value>,
+        _neovim: Neovim<Self::Writer>,
+    ) {
+    }
+}
+
+fn escape_vim_path(path: &str) -> String {
+    path.replace('\\', r"\\")
+        .replace(' ', r"\ ")
+        .replace('|', r"\|")
+        .replace('"', r#"\""#)
+        .replace('#', r"\#")
+}
+
+fn reader_thread(
+    reader: Box<dyn Read + Send>,
+    app: AppHandle,
+    session_id: String,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+) {
+    let mut reader = reader;
+    let mut buf = [0u8; 4096];
+    let mut accumulator = String::new();
+    let mut last_emit = Instant::now();
+
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                accumulator.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if accumulator.len() >= 4096 || last_emit.elapsed() >= Duration::from_millis(8) {
+                    let _ = app.emit(
+                        &format!("terminal-data-{}", session_id),
+                        std::mem::take(&mut accumulator),
+                    );
+                    last_emit = Instant::now();
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    if !accumulator.is_empty() {
+        let _ = app.emit(&format!("terminal-data-{}", session_id), accumulator);
+    }
+    drop(child);
+    let _ = app.emit(&format!("terminal-exited-{}", session_id), ());
+}
 
 #[tauri::command]
 fn get_current_dir() -> Result<String, String> {
@@ -114,50 +194,115 @@ fn spawn_terminal(
             TerminalSession {
                 master: pair.master,
                 writer: Arc::new(Mutex::new(Some(writer))),
+                socket_path: None,
             },
         );
         session_id
     };
 
     let session_id_clone = session_id.clone();
-    let app_clone = app.clone();
-
-    thread::spawn(move || {
-        let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        let mut accumulator = String::new();
-        let mut last_emit = Instant::now();
-
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    accumulator.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if accumulator.len() >= 4096
-                        || last_emit.elapsed() >= Duration::from_millis(8)
-                    {
-                        let _ = app_clone.emit(
-                            &format!("terminal-data-{}", session_id_clone),
-                            std::mem::take(&mut accumulator),
-                        );
-                        last_emit = Instant::now();
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-
-        if !accumulator.is_empty() {
-            let _ = app_clone.emit(
-                &format!("terminal-data-{}", session_id_clone),
-                accumulator,
-            );
-        }
-        drop(child);
-        let _ = app_clone.emit(&format!("terminal-exited-{}", session_id_clone), ());
-    });
+    thread::spawn(move || reader_thread(reader, app, session_id_clone, child));
 
     Ok(session_id)
+}
+
+#[tauri::command]
+fn spawn_neovim(
+    app: AppHandle,
+    state: State<'_, TerminalStateHandle>,
+    cwd: Option<String>,
+    rows: u16,
+    cols: u16,
+    file_path: Option<String>,
+) -> Result<NeovimSpawnResult, String> {
+    let pty_system = native_pty_system();
+
+    let pair = pty_system
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| e.to_string())?;
+
+    let (session_id, socket_path) = {
+        let mut state = state.lock();
+        let id = state.next_id;
+        state.next_id += 1;
+        (
+            format!("term-{}", id),
+            format!("/tmp/nvim-term-{}.sock", id),
+        )
+    };
+
+    let mut cmd = CommandBuilder::new("nvim");
+    cmd.arg("--listen");
+    cmd.arg(&socket_path);
+    if let Some(ref fp) = file_path {
+        cmd.arg(fp);
+    }
+    if let Some(ref dir) = cwd {
+        cmd.cwd(dir);
+    }
+
+    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+
+    {
+        let mut state = state.lock();
+        state.sessions.insert(
+            session_id.clone(),
+            TerminalSession {
+                master: pair.master,
+                writer: Arc::new(Mutex::new(Some(writer))),
+                socket_path: Some(socket_path.clone()),
+            },
+        );
+    }
+
+    let session_id_clone = session_id.clone();
+    let socket_path_clone = socket_path.clone();
+    thread::spawn(move || {
+        reader_thread(reader, app, session_id_clone, child);
+        // Best-effort socket cleanup when the process exits
+        let _ = std::fs::remove_file(&socket_path_clone);
+    });
+
+    Ok(NeovimSpawnResult {
+        session_id,
+        socket_path,
+    })
+}
+
+#[tauri::command]
+async fn nvim_open_file(socket_path: String, file_path: String) -> Result<(), String> {
+    let path = std::path::Path::new(&socket_path);
+    let mut last_err = String::new();
+
+    for attempt in 0..10u32 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        match nvim_create::new_unix_socket(path, NvimHandler).await {
+            Ok((nvim, _io_handle)) => {
+                let escaped = escape_vim_path(&file_path);
+                return nvim
+                    .command(&format!("tabe {}", escaped))
+                    .await
+                    .map_err(|e| e.to_string());
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+
+    Err(format!(
+        "Failed to connect to Neovim socket after 10 attempts: {}",
+        last_err
+    ))
 }
 
 #[tauri::command]
@@ -206,8 +351,13 @@ fn resize_terminal(
 
 #[tauri::command]
 fn close_terminal(state: State<'_, TerminalStateHandle>, session_id: String) -> Result<(), String> {
-    let mut state = state.lock();
-    state.sessions.remove(&session_id);
+    let socket_path = {
+        let mut state = state.lock();
+        state.sessions.remove(&session_id).and_then(|s| s.socket_path)
+    };
+    if let Some(path) = socket_path {
+        let _ = std::fs::remove_file(&path);
+    }
     Ok(())
 }
 
@@ -224,6 +374,8 @@ pub fn run() {
             read_directory,
             read_file,
             spawn_terminal,
+            spawn_neovim,
+            nvim_open_file,
             write_to_terminal,
             resize_terminal,
             close_terminal,
