@@ -324,3 +324,20 @@ html, body {
 .status-item {
   color: #ffffff33;
 }
+
+.file-list::-webkit-scrollbar {
+  width: 3px;
+}
+
+.file-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-list::-webkit-scrollbar-thumb {
+  background-color: #ffffff22;
+  border-radius: 2px;
+}
+
+.file-list::-webkit-scrollbar-thumb:hover {
+  background-color: #ffffff44;
+}

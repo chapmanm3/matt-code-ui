@@ -7,6 +7,8 @@ import "@xterm/xterm/css/xterm.css";
 const ICON_FOLDER = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.5 4.5A1 1 0 012.5 3.5h3.086a1 1 0 01.707.293L7.5 5h6a1 1 0 011 1v6a1 1 0 01-1 1h-11a1 1 0 01-1-1V4.5z" fill="#e0e0e0" fill-opacity="0.7"/></svg>`;
 
 const ICON_FILE = `<svg width="16" height="16" viewBox="0 1 14 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 1.5h7l3 3V14.5H2V1.5z" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/><path d="M9 1.5V4.5h3" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/></svg>`;
+const ICON_CHEVRON_DOWN = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_CHEVRON_RIGHT = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 interface FileEntry {
   name: string;
@@ -382,17 +384,17 @@ function toggleTerminal() {
     container.classList.remove("collapsed");
     container.classList.remove("full-height");
     if (mainContent) mainContent.style.display = "";
-    toggleBtn.textContent = "−";
+    toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
     setTimeout(() => getActiveTab()?.fitAddon?.fit(), 100);
   } else if (container.classList.contains("full-height")) {
     container.classList.remove("full-height");
     if (mainContent) mainContent.style.display = "";
-    toggleBtn.textContent = "−";
+    toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
     setTimeout(() => getActiveTab()?.fitAddon?.fit(), 100);
   } else {
     container.classList.add("collapsed");
     container.classList.remove("full-height");
-    toggleBtn.textContent = "+";
+    toggleBtn.innerHTML = ICON_CHEVRON_RIGHT;
   }
 }
 
