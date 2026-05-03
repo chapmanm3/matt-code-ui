@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Matt Code UI</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Files</span>
+        </div>
+        <div id="current-path" class="current-path"></div>
+        <div id="file-list" class="file-list"></div>
+      </aside>
+      <div id="main-area">
+        <main id="main-content" style="display:none">
+          <div class="welcome">
+            <h1>Matt Code UI</h1>
+            <p>Select a file to view its contents</p>
+          </div>
+        </main>
+        <div id="terminal-container" class="terminal-container full-height">
+          <div class="terminal-header">
+            <div class="tab-bar">
+              <button class="new-tab">+</button>
+            </div>
+            <button id="toggle-terminal" class="terminal-toggle">−</button>
+          </div>
+          <div id="terminal" class="terminal"></div>
+          <div class="status-bar">
+            <span id="status-info">Terminal</span>
+            <span class="status-right">
+              <span class="status-item">Alt+Tab: Next Tab</span>
+              <span class="status-item">Alt+Shift+Tab: Prev Tab</span>
+              <span class="status-item">Alt+T: New Tab</span>
+              <span class="status-item">Alt+W: Close Tab</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
