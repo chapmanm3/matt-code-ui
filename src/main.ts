@@ -116,11 +116,6 @@ function renderTabBar() {
 }
 
 async function switchTab(tabId: string) {
-  const previousTab = getActiveTab();
-  if (previousTab?.terminal) {
-    previousTab.terminal.clear();
-  }
-
   const newTab = tabs.find(t => t.id === tabId);
   if (!newTab) return;
 
@@ -276,12 +271,10 @@ function renderActiveTerminal() {
   const terminalEl = document.getElementById("terminal");
   if (!terminalEl) return;
 
-  terminalEl.innerHTML = "";
-
   if (tab?.terminal) {
     try {
-      terminalEl.appendChild((tab.terminal as any).element);
-      setTimeout(() => tab.fitAddon?.fit(), 10);
+      terminalEl.replaceChildren((tab.terminal as any).element);
+      requestAnimationFrame(() => tab.fitAddon?.fit());
     } catch (e) {
       console.error("Error rendering terminal:", e);
     }
@@ -387,12 +380,12 @@ function toggleTerminal() {
     container.classList.remove("full-height");
     if (mainContent) mainContent.style.display = "";
     toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
-    setTimeout(() => getActiveTab()?.fitAddon?.fit(), 100);
+    container.addEventListener("transitionend", () => getActiveTab()?.fitAddon?.fit(), { once: true });
   } else if (container.classList.contains("full-height")) {
     container.classList.remove("full-height");
     if (mainContent) mainContent.style.display = "";
     toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
-    setTimeout(() => getActiveTab()?.fitAddon?.fit(), 100);
+    container.addEventListener("transitionend", () => getActiveTab()?.fitAddon?.fit(), { once: true });
   } else {
     container.classList.add("collapsed");
     container.classList.remove("full-height");
@@ -410,9 +403,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("toggle-terminal")?.addEventListener("click", toggleTerminal);
     document.querySelector(".new-tab")?.addEventListener("click", () => createTab(false));
 
-    window.addEventListener("resize", () => {
-      getActiveTab()?.fitAddon?.fit();
-    });
+    const terminalEl = document.getElementById("terminal");
+    if (terminalEl) {
+      const ro = new ResizeObserver(() => {
+        getActiveTab()?.fitAddon?.fit();
+      });
+      ro.observe(terminalEl);
+    }
 
     window.addEventListener("keydown", async (e) => {
       if (e.altKey || e.metaKey) {
