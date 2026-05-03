@@ -279,9 +279,7 @@ html, body {
   border: none;
   color: #ffffff44;
   cursor: pointer;
-  font-size: 14px;
   padding: 0 6px;
-  line-height: 1;
   display: flex;
   align-items: center;
 }

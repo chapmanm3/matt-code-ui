@@ -309,6 +309,8 @@ async function createTab(isNeovim: boolean = false, filePath?: string) {
   container?.classList.remove("collapsed");
   container?.classList.add("full-height");
   if (mainContent) mainContent.style.display = "none";
+  const toggleBtn = document.getElementById("toggle-terminal");
+  if (toggleBtn) toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
 
   const tabId = `tab-${crypto.randomUUID()}`;
   const tabName = isNeovim ? `nvim ${nextTabIndex++}` : `Terminal ${nextTabIndex++}`;
