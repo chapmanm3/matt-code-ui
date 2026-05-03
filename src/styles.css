@@ -162,12 +162,6 @@ html, body {
   overflow: hidden;
 }
 
-#main-content {
-  flex: 1;
-  background-color: #090b10;
-  overflow: auto;
-}
-
 .terminal-container {
   height: 300px;
   min-height: 100px;
