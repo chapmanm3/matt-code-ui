@@ -1,8 +1,5 @@
-use async_trait::async_trait;
-use nvim_rs::{create::tokio as nvim_create, Handler, Neovim};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -11,6 +8,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
+
+#[cfg(unix)]
+use async_trait::async_trait;
+#[cfg(unix)]
+use nvim_rs::{create::tokio as nvim_create, Handler, Neovim, Value};
+#[cfg(unix)]
 use tokio_util::compat::Compat;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,10 +44,11 @@ pub struct TerminalState {
 
 pub type TerminalStateHandle = Arc<Mutex<TerminalState>>;
 
-// Minimal no-op handler — we only send commands, never receive notifications
+#[cfg(unix)]
 #[derive(Clone)]
 struct NvimHandler;
 
+#[cfg(unix)]
 #[async_trait]
 impl Handler for NvimHandler {
     type Writer = Compat<tokio::net::unix::OwnedWriteHalf>;
@@ -65,14 +69,6 @@ impl Handler for NvimHandler {
         _neovim: Neovim<Self::Writer>,
     ) {
     }
-}
-
-fn escape_vim_path(path: &str) -> String {
-    path.replace('\\', r"\\")
-        .replace(' ', r"\ ")
-        .replace('|', r"\|")
-        .replace('"', r#"\""#)
-        .replace('#', r"\#")
 }
 
 fn reader_thread(
@@ -206,6 +202,7 @@ fn spawn_terminal(
     Ok(session_id)
 }
 
+#[cfg(unix)]
 #[tauri::command]
 fn spawn_neovim(
     app: AppHandle,
@@ -266,7 +263,6 @@ fn spawn_neovim(
     let socket_path_clone = socket_path.clone();
     thread::spawn(move || {
         reader_thread(reader, app, session_id_clone, child);
-        // Best-effort socket cleanup when the process exits
         let _ = std::fs::remove_file(&socket_path_clone);
     });
 
@@ -276,6 +272,21 @@ fn spawn_neovim(
     })
 }
 
+#[cfg(not(unix))]
+#[tauri::command]
+fn spawn_neovim(
+    _app: AppHandle,
+    _state: State<'_, TerminalStateHandle>,
+    cwd: Option<String>,
+    rows: u16,
+    cols: u16,
+    file_path: Option<String>,
+) -> Result<NeovimSpawnResult, String> {
+    let _ = (cwd, rows, cols, file_path);
+    Err("Neovim RPC is not supported on this platform".to_string())
+}
+
+#[cfg(unix)]
 #[tauri::command]
 async fn nvim_open_file(socket_path: String, file_path: String) -> Result<(), String> {
     let path = std::path::Path::new(&socket_path);
@@ -287,9 +298,15 @@ async fn nvim_open_file(socket_path: String, file_path: String) -> Result<(), St
         }
         match nvim_create::new_unix_socket(path, NvimHandler).await {
             Ok((nvim, _io_handle)) => {
-                let escaped = escape_vim_path(&file_path);
+                let escaped = nvim
+                    .call_function("fnameescape", vec![Value::from(file_path.as_str())])
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let escaped_str = escaped
+                    .as_str()
+                    .ok_or("fnameescape returned non-string value")?;
                 return nvim
-                    .command(&format!("tabe {}", escaped))
+                    .command(&format!("tabe {}", escaped_str))
                     .await
                     .map_err(|e| e.to_string());
             }
@@ -303,6 +320,13 @@ async fn nvim_open_file(socket_path: String, file_path: String) -> Result<(), St
         "Failed to connect to Neovim socket after 10 attempts: {}",
         last_err
     ))
+}
+
+#[cfg(not(unix))]
+#[tauri::command]
+async fn nvim_open_file(socket_path: String, file_path: String) -> Result<(), String> {
+    let _ = (socket_path, file_path);
+    Err("Neovim RPC is not supported on this platform".to_string())
 }
 
 #[tauri::command]

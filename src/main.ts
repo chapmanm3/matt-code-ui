@@ -451,10 +451,11 @@ async function openInNeovim(filePath: string) {
         socketPath: activeTab.nvimSocketPath,
         filePath: normalizedPath,
       });
+      return;
     } catch (error) {
       console.error("nvim_open_file failed:", error);
+      activeTab.nvimSocketPath = null; // clear stale socket, fall through
     }
-    return;
   }
 
   // Another neovim tab exists with a live socket — switch and use RPC
@@ -468,10 +469,11 @@ async function openInNeovim(filePath: string) {
         socketPath: existingNeovimTab.nvimSocketPath,
         filePath: normalizedPath,
       });
+      return;
     } catch (error) {
       console.error("nvim_open_file failed:", error);
+      existingNeovimTab.nvimSocketPath = null; // clear stale socket, fall through
     }
-    return;
   }
 
   // No neovim tab — spawn one; file path goes directly to nvim as a CLI arg
