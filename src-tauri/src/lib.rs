@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
 use async_trait::async_trait;
@@ -16,7 +17,7 @@ use nvim_rs::{create::tokio as nvim_create, Handler, Neovim, Value};
 #[cfg(unix)]
 use tokio_util::compat::Compat;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileEntry {
     pub name: String,
     pub path: String,
@@ -28,6 +29,87 @@ pub struct FileEntry {
 pub struct NeovimSpawnResult {
     pub session_id: String,
     pub socket_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Keybinds {
+    #[serde(default = "default_next_tab")]
+    pub next_tab: String,
+    #[serde(default = "default_prev_tab")]
+    pub prev_tab: String,
+    #[serde(default = "default_new_terminal")]
+    pub new_terminal: String,
+    #[serde(default = "default_close_terminal")]
+    pub close_terminal: String,
+}
+
+fn default_next_tab() -> String { "Alt+Tab".to_string() }
+fn default_prev_tab() -> String { "Alt+Shift+Tab".to_string() }
+fn default_new_terminal() -> String { "Alt+T".to_string() }
+fn default_close_terminal() -> String { "Alt+W".to_string() }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Config {
+    #[serde(default)]
+    pub keybinds: Keybinds,
+}
+
+impl Default for Keybinds {
+    fn default() -> Self {
+        Self {
+            next_tab: default_next_tab(),
+            prev_tab: default_prev_tab(),
+            new_terminal: default_new_terminal(),
+            close_terminal: default_close_terminal(),
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            keybinds: Keybinds::default(),
+        }
+    }
+}
+
+fn get_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_dir = app.path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    Ok(app_dir.join("config.json"))
+}
+
+#[tauri::command]
+fn read_config(app: AppHandle) -> Result<Config, String> {
+    let config_path = get_config_path(&app)?;
+
+    if !config_path.exists() {
+        let default_config = Config::default();
+        let config_str = serde_json::to_string_pretty(&default_config)
+            .map_err(|e| e.to_string())?;
+        fs::create_dir_all(config_path.parent().unwrap())
+            .map_err(|e| e.to_string())?;
+        fs::write(&config_path, config_str)
+            .map_err(|e| e.to_string())?;
+        return Ok(default_config);
+    }
+
+    let contents = fs::read_to_string(&config_path)
+        .map_err(|e| e.to_string())?;
+    let config: Config = serde_json::from_str(&contents)
+        .unwrap_or_default();
+    Ok(config)
+}
+
+#[tauri::command]
+fn write_config(app: AppHandle, config: String) -> Result<(), String> {
+    let config_path = get_config_path(&app)?;
+    fs::create_dir_all(config_path.parent().unwrap())
+        .map_err(|e| e.to_string())?;
+    fs::write(&config_path, config)
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 struct TerminalSession {
@@ -51,7 +133,7 @@ struct NvimHandler;
 #[cfg(unix)]
 #[async_trait]
 impl Handler for NvimHandler {
-    type Writer = Compat<tokio::net::unix::OwnedWriteHalf>;
+    type Writer = Compat<tokio::io::WriteHalf<tokio::net::UnixStream>>;
 
     async fn handle_request(
         &self,
@@ -296,7 +378,7 @@ async fn nvim_open_file(socket_path: String, file_path: String) -> Result<(), St
         if attempt > 0 {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        match nvim_create::new_unix_socket(path, NvimHandler).await {
+        match nvim_create::new_path(path, NvimHandler).await {
             Ok((nvim, _io_handle)) => {
                 let escaped = nvim
                     .call_function("fnameescape", vec![Value::from(file_path.as_str())])
@@ -403,6 +485,8 @@ pub fn run() {
             write_to_terminal,
             resize_terminal,
             close_terminal,
+            read_config,
+            write_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

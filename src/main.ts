@@ -22,6 +22,17 @@ interface NeovimSpawnResult {
   socket_path: string;
 }
 
+interface Keybinds {
+  next_tab: string;
+  prev_tab: string;
+  new_terminal: string;
+  close_terminal: string;
+}
+
+interface Config {
+  keybinds: Keybinds;
+}
+
 interface TerminalTab {
   id: string;
   sessionId: string | null;
@@ -42,9 +53,41 @@ let currentPath: string = "";
 let tabs: TerminalTab[] = [];
 let activeTabId: string = "";
 let nextTabIndex: number = 1;
+let config: Config = {
+  keybinds: {
+    next_tab: "Alt+Tab",
+    prev_tab: "Alt+Shift+Tab",
+    new_terminal: "Alt+T",
+    close_terminal: "Alt+W",
+  }
+};
 
 function getActiveTab(): TerminalTab | undefined {
   return tabs.find(t => t.id === activeTabId);
+}
+
+async function loadConfig() {
+  try {
+    const result = await invoke<Config>("read_config");
+    config = result;
+  } catch (error) {
+    console.error("Error loading config:", error);
+  }
+}
+
+function matchesKeybind(e: KeyboardEvent, keybind: string): boolean {
+  const parts = keybind.toLowerCase().split("+");
+  const key = parts[parts.length - 1];
+  const hasAlt = parts.includes("alt");
+  const hasShift = parts.includes("shift");
+  const hasMeta = parts.includes("meta") || parts.includes("cmd");
+
+  return (
+    e.key.toLowerCase() === key &&
+    e.altKey === hasAlt &&
+    e.shiftKey === hasShift &&
+    (e.metaKey || e.ctrlKey) === hasMeta
+  );
 }
 
 async function loadDirectory(path: string) {
@@ -510,6 +553,7 @@ function toggleTerminal() {
 
 window.addEventListener("DOMContentLoaded", async () => {
   try {
+    await loadConfig();
     const cwd: string = await invoke("get_current_dir");
     currentPath = cwd;
     loadDirectory(cwd);
@@ -527,29 +571,32 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     window.addEventListener("keydown", async (e) => {
-      if (e.altKey || e.metaKey) {
-        const currentIndex = tabs.findIndex(t => t.id === activeTabId);
+      const currentIndex = tabs.findIndex(t => t.id === activeTabId);
 
-        switch (e.key) {
-          case "Tab":
-            e.preventDefault();
-            if (e.shiftKey) {
-              const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
-              await switchTab(tabs[prevIndex].id);
-            } else {
-              const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
-              await switchTab(tabs[nextIndex].id);
-            }
-            break;
-          case "t":
-            e.preventDefault();
-            await createTab(false);
-            break;
-          case "w":
-            e.preventDefault();
-            await closeTab(activeTabId);
-            break;
-        }
+      if (matchesKeybind(e, config.keybinds.next_tab)) {
+        e.preventDefault();
+        const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
+        await switchTab(tabs[nextIndex].id);
+        return;
+      }
+
+      if (matchesKeybind(e, config.keybinds.prev_tab)) {
+        e.preventDefault();
+        const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
+        await switchTab(tabs[prevIndex].id);
+        return;
+      }
+
+      if (matchesKeybind(e, config.keybinds.new_terminal)) {
+        e.preventDefault();
+        await createTab(false);
+        return;
+      }
+
+      if (matchesKeybind(e, config.keybinds.close_terminal)) {
+        e.preventDefault();
+        await closeTab(activeTabId);
+        return;
       }
     });
   } catch (error) {
