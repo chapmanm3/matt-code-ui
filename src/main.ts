@@ -35,7 +35,7 @@ interface TerminalTab {
 let currentPath: string = "";
 let tabs: TerminalTab[] = [];
 let activeTabId: string = "";
-let nextTabIndex: number = 2;
+let nextTabIndex: number = 1;
 
 function getActiveTab(): TerminalTab | undefined {
   return tabs.find(t => t.id === activeTabId);
@@ -145,9 +145,9 @@ async function initializeTab(tab: TerminalTab) {
     fontSize: 13,
     fontFamily: "Consolas, Monaco, 'Courier New', monospace",
     theme: {
-      background: "#1e1e1e",
-      foreground: "#cccccc",
-      cursor: "#cccccc",
+      background: "#090b10",
+      foreground: "#e0e0e0",
+      cursor: "#e0e0e0",
     },
     convertEol: true,
   });

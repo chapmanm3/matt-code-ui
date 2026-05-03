@@ -188,9 +188,6 @@ html, body {
   min-height: 100%;
 }
 
-.terminal-container.full-height + #main-content {
-  display: none;
-}
 
 .terminal-header {
   display: flex;
