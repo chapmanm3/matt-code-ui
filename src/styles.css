@@ -203,32 +203,37 @@ html, body {
 
 .tab-bar {
   display: flex;
-  align-items: center;
-  gap: 2px;
+  align-items: flex-end;
+  gap: 0;
   overflow-x: auto;
   flex: 1;
+  border-bottom: none;
 }
 
 .tab {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  background-color: #2d2d2d;
-  border-radius: 4px 4px 0 0;
+  padding: 6px 12px;
   cursor: pointer;
   white-space: nowrap;
-  color: #969696;
-  font-size: 12px;
+  color: #ffffff44;
+  font-size: 11px;
+  background: none;
+  border-bottom: 2px solid transparent;
+  font-weight: 400;
 }
 
 .tab:hover {
-  background-color: #3c3c3c;
+  color: #ffffff88;
+  background-color: #ffffff0f;
 }
 
 .tab.active {
-  background-color: #1e1e1e;
   color: #e0e0e0;
+  border-bottom: 2px solid #ffffff;
+  font-weight: 500;
+  background: none;
 }
 
 .tab-name {
@@ -238,25 +243,31 @@ html, body {
 }
 
 .tab-close {
-  margin-left: 2px;
-  padding: 0 2px;
+  margin-left: 4px;
+  padding: 1px 4px;
   border-radius: 2px;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
+  display: none;
+}
+
+.tab:hover .tab-close {
+  display: inline;
 }
 
 .tab-close:hover {
-  background-color: #5a5a5a;
-  color: #ffffff;
+  background-color: #ffffff;
+  color: #090b10;
 }
 
 .new-tab {
-  padding: 4px 8px;
+  padding: 4px 10px 6px;
   background: none;
   border: none;
-  color: #969696;
+  color: #ffffff33;
   cursor: pointer;
   font-size: 16px;
+  line-height: 1;
 }
 
 .new-tab:hover {
@@ -266,10 +277,13 @@ html, body {
 .terminal-toggle {
   background: none;
   border: none;
-  color: #bbbbbb;
+  color: #ffffff44;
   cursor: pointer;
-  font-size: 16px;
-  padding: 0 4px;
+  font-size: 14px;
+  padding: 0 6px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
 }
 
 .terminal-toggle:hover {
