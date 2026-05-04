@@ -27,18 +27,27 @@
         <div id="terminal-container" class="terminal-container full-height">
           <div class="terminal-header">
             <div class="tab-bar">
-              <button class="new-tab">+</button>
+              <button class="new-tab" title="New Terminal (Ctrl+T)">+</button>
+              <button class="new-chat" title="New Chat (Ctrl+C)">💬</button>
             </div>
             <button id="toggle-terminal" class="terminal-toggle"></button>
           </div>
           <div id="terminal" class="terminal"></div>
+          <div id="chat-container" class="chat-container" style="display:none">
+            <div id="chat-messages" class="chat-messages"></div>
+            <div class="chat-input-container">
+              <input type="text" id="chat-input" class="chat-input" placeholder="Type a message..." />
+              <button id="chat-send" class="chat-send">Send</button>
+            </div>
+          </div>
           <div class="status-bar">
             <span id="status-info">Terminal</span>
             <span class="status-right">
-              <span class="status-item">Alt+Tab: Next Tab</span>
-              <span class="status-item">Alt+Shift+Tab: Prev Tab</span>
-              <span class="status-item">Alt+T: New Tab</span>
-              <span class="status-item">Alt+W: Close Tab</span>
+              <span class="status-item">Ctrl+Tab: Next Tab</span>
+              <span class="status-item">Ctrl+Shift+Tab: Prev Tab</span>
+              <span class="status-item">Ctrl+T: New Tab</span>
+              <span class="status-item">Ctrl+C: New Chat</span>
+              <span class="status-item">Ctrl+W: Close Tab</span>
             </span>
           </div>
         </div>

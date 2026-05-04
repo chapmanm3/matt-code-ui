@@ -31,7 +31,7 @@ pub struct NeovimSpawnResult {
     pub socket_path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Keybinds {
     #[serde(default = "default_next_tab")]
     pub next_tab: String,
@@ -48,28 +48,116 @@ fn default_prev_tab() -> String { "Alt+Shift+Tab".to_string() }
 fn default_new_terminal() -> String { "Alt+T".to_string() }
 fn default_close_terminal() -> String { "Alt+W".to_string() }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
     #[serde(default)]
     pub keybinds: Keybinds,
 }
 
-impl Default for Keybinds {
+struct OpenCodeServerState {
+    child: Mutex<Option<std::process::Child>>,
+    port: Mutex<u16>,
+    ready: Mutex<bool>,
+}
+
+impl Default for OpenCodeServerState {
     fn default() -> Self {
         Self {
-            next_tab: default_next_tab(),
-            prev_tab: default_prev_tab(),
-            new_terminal: default_new_terminal(),
-            close_terminal: default_close_terminal(),
+            child: Mutex::new(None),
+            port: Mutex::new(4096),
+            ready: Mutex::new(false),
         }
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            keybinds: Keybinds::default(),
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OpenCodeServerStatus {
+    pub running: bool,
+    pub port: u16,
+    pub ready: bool,
+}
+
+#[tauri::command]
+async fn start_opencode_server(
+    app: AppHandle,
+    state: State<'_, OpenCodeServerState>,
+) -> Result<OpenCodeServerStatus, String> {
+    let port = {
+        let port_guard = state.port.lock();
+        *port_guard
+    };
+
+    let child = std::process::Command::new("opencode")
+        .arg("serve")
+        .arg("--port")
+        .arg(port.to_string())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+
+    let child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = app.emit("opencode-not-found", {
+                "OpenCode not found. Please install it: https://github.com/anomalyco/opencode/releases"
+            });
+            return Err(format!("Failed to start opencode: {}", e));
         }
+    };
+
+    {
+        let mut child_guard = state.child.lock();
+        *child_guard = Some(child);
+    }
+
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{}/global/health", port);
+
+        for _ in 0..150 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = app_handle.emit("opencode-ready", port);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        let _ = app_handle.emit("opencode-failed", "Server failed to start within 30 seconds");
+    });
+
+    Ok(OpenCodeServerStatus {
+        running: true,
+        port,
+        ready: false,
+    })
+}
+
+#[tauri::command]
+fn stop_opencode_server(state: State<'_, OpenCodeServerState>) -> Result<bool, String> {
+    let mut child_guard = state.child.lock();
+    if let Some(mut child) = child_guard.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+        let mut ready_guard = state.ready.lock();
+        *ready_guard = false;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+fn get_opencode_server_status(state: State<'_, OpenCodeServerState>) -> OpenCodeServerStatus {
+    let child_guard = state.child.lock();
+    let port_guard = state.port.lock();
+    let ready_guard = state.ready.lock();
+    OpenCodeServerStatus {
+        running: child_guard.is_some(),
+        port: *port_guard,
+        ready: *ready_guard,
     }
 }
 
@@ -470,11 +558,14 @@ fn close_terminal(state: State<'_, TerminalStateHandle>, session_id: String) -> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let terminal_state: TerminalStateHandle = Arc::new(Mutex::new(TerminalState::default()));
+    let opencode_state: Arc<OpenCodeServerState> = Arc::new(OpenCodeServerState::default());
 
     tauri::Builder::default()
         .manage(terminal_state)
+        .manage(opencode_state)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_current_dir,
             read_directory,
@@ -487,6 +578,9 @@ pub fn run() {
             close_terminal,
             read_config,
             write_config,
+            start_opencode_server,
+            stop_opencode_server,
+            get_opencode_server_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
