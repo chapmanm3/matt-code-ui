@@ -80,30 +80,35 @@ pub struct OpenCodeServerStatus {
 #[tauri::command]
 async fn start_opencode_server(
     app: AppHandle,
-    state: State<'_, OpenCodeServerState>,
+    state: State<'_, Arc<OpenCodeServerState>>,
 ) -> Result<OpenCodeServerStatus, String> {
     let port = {
         let port_guard = state.port.lock();
         *port_guard
     };
 
+    println!("[OpenCode] Starting server on port {}...", port);
+
     let child = std::process::Command::new("opencode")
         .arg("serve")
         .arg("--port")
         .arg(port.to_string())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn();
 
     let child = match child {
         Ok(c) => c,
         Err(e) => {
+            println!("[OpenCode] Failed to start: {}", e);
             let _ = app.emit("opencode-not-found", {
                 "OpenCode not found. Please install it: https://github.com/anomalyco/opencode/releases"
             });
             return Err(format!("Failed to start opencode: {}", e));
         }
     };
+
+    println!("[OpenCode] Server process started, waiting for ready...");
 
     {
         let mut child_guard = state.child.lock();
@@ -115,16 +120,31 @@ async fn start_opencode_server(
         let client = reqwest::Client::new();
         let url = format!("http://127.0.0.1:{}/global/health", port);
 
-        for _ in 0..150 {
+        for i in 0..150 {
             tokio::time::sleep(Duration::from_millis(200)).await;
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
+                    println!("[OpenCode] Server ready on port {} after {}ms", port, i * 200);
                     let _ = app_handle.emit("opencode-ready", port);
+                    if let Some(state) = app_handle.try_state::<Arc<OpenCodeServerState>>() {
+                        let mut ready = state.ready.lock();
+                        *ready = true;
+                    }
                     return;
                 }
-                _ => {}
+                Ok(resp) => {
+                    if i % 10 == 0 {
+                        println!("[OpenCode] Waiting for server... status: {}", resp.status());
+                    }
+                }
+                Err(e) => {
+                    if i % 10 == 0 {
+                        println!("[OpenCode] Waiting for server... error: {}", e);
+                    }
+                }
             }
         }
+        println!("[OpenCode] Server failed to start within 30 seconds");
         let _ = app_handle.emit("opencode-failed", "Server failed to start within 30 seconds");
     });
 
@@ -136,7 +156,7 @@ async fn start_opencode_server(
 }
 
 #[tauri::command]
-fn stop_opencode_server(state: State<'_, OpenCodeServerState>) -> Result<bool, String> {
+fn stop_opencode_server(state: State<'_, Arc<OpenCodeServerState>>) -> Result<bool, String> {
     let mut child_guard = state.child.lock();
     if let Some(mut child) = child_guard.take() {
         let _ = child.kill();
@@ -150,7 +170,7 @@ fn stop_opencode_server(state: State<'_, OpenCodeServerState>) -> Result<bool, S
 }
 
 #[tauri::command]
-fn get_opencode_server_status(state: State<'_, OpenCodeServerState>) -> OpenCodeServerStatus {
+fn get_opencode_server_status(state: State<'_, Arc<OpenCodeServerState>>) -> OpenCodeServerStatus {
     let child_guard = state.child.lock();
     let port_guard = state.port.lock();
     let ready_guard = state.ready.lock();

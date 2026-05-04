@@ -86,7 +86,56 @@ let config: Config = {
   }
 };
 let opencodeServerPort: number = 4096;
-let opencodeServerReady: boolean = false;
+let opencodeReadyPromise: Promise<void> | null = null;
+let opencodeReadyResolver: (() => void) | null = null;
+
+async function initOpenCodeClient() {
+  if (opencodeReadyPromise) {
+    console.log("OpenCode client init already in progress, waiting...");
+    return opencodeReadyPromise;
+  }
+
+  console.log("Initializing OpenCode client...");
+  opencodeReadyPromise = new Promise<void>((resolve) => {
+    opencodeReadyResolver = resolve;
+  });
+
+  try {
+    const status = await invoke<{ running: boolean; port: number; ready: boolean }>("get_opencode_server_status");
+    console.log("OpenCode server status:", status);
+    opencodeServerPort = status.port;
+
+    if (status.ready) {
+      console.log("OpenCode server already ready");
+      opencodeReadyResolver?.();
+      return opencodeReadyPromise;
+    }
+
+    listen("opencode-ready", (event) => {
+      console.log("OpenCode server ready event received, port:", event.payload);
+      opencodeServerPort = event.payload as number;
+      opencodeReadyResolver?.();
+    });
+
+    listen("opencode-failed", (event) => {
+      console.error("OpenCode server failed to start:", event.payload);
+      opencodeReadyResolver?.();
+    });
+
+    if (!status.running) {
+      console.log("Starting OpenCode server...");
+      await invoke("start_opencode_server");
+      console.log("OpenCode server start command issued");
+    } else {
+      console.log("OpenCode server already running, waiting for ready...");
+    }
+  } catch (error) {
+    console.error("Failed to initialize OpenCode client:", error);
+    opencodeReadyResolver?.();
+  }
+
+  return opencodeReadyPromise;
+}
 
 function getActiveTab(): Tab | undefined {
   return tabs.find(t => t.id === activeTabId);
@@ -103,13 +152,22 @@ function isTerminalTab(tab: Tab): tab is TerminalTab {
 async function loadConfig() {
   try {
     const result = await invoke<Config>("read_config");
-    config = result;
+    // Deep merge: preserve defaults, overlay loaded values, merge keybinds
+    config = {
+      ...config,
+      ...result,
+      keybinds: {
+        ...config.keybinds,
+        ...(result?.keybinds || {}),
+      },
+    };
   } catch (error) {
     console.error("Error loading config:", error);
   }
 }
 
 function matchesKeybind(e: KeyboardEvent, keybind: string): boolean {
+  if (!keybind) return false;
   const parts = keybind.toLowerCase().split("+");
   const key = parts[parts.length - 1];
   const hasAlt = parts.includes("alt");
@@ -473,9 +531,15 @@ function renderActiveContent() {
   const tab = getActiveTab();
   const terminalEl = document.getElementById("terminal");
   const chatEl = document.getElementById("chat-container");
-  if (!terminalEl || !chatEl) return;
+  if (!terminalEl || !chatEl) {
+    console.error("Terminal or chat container not found");
+    return;
+  }
+
+  console.log("renderActiveContent, tab:", tab?.id, "isChatTab:", tab ? isChatTab(tab) : 'no tab');
 
   if (tab && isChatTab(tab)) {
+    console.log("Showing chat container");
     terminalEl.style.display = "none";
     chatEl.style.display = "flex";
     renderChatMessages(tab);
@@ -484,6 +548,7 @@ function renderActiveContent() {
       input?.focus();
     });
   } else if (tab && isTerminalTab(tab) && tab.terminal) {
+    console.log("Showing terminal");
     chatEl.style.display = "none";
     terminalEl.style.display = "";
     try {
@@ -628,40 +693,8 @@ async function openInNeovim(filePath: string) {
   await createNeovimTab(normalizedPath);
 }
 
-async function initOpenCodeClient() {
-  try {
-    const status = await invoke<{ running: boolean; port: number; ready: boolean }>("get_opencode_server_status");
-    if (!status.running) {
-      const result = await invoke<{ running: boolean; port: number; ready: boolean }>("start_opencode_server");
-      opencodeServerPort = result.port;
-    } else {
-      opencodeServerPort = status.port;
-    }
-
-    opencodeServerReady = true;
-
-    listen("opencode-ready", (event) => {
-      opencodeServerReady = true;
-      opencodeServerPort = event.payload as number;
-    });
-
-    listen("opencode-failed", (event) => {
-      console.error("OpenCode server failed to start:", event.payload);
-    });
-  } catch (error) {
-    console.error("Failed to initialize OpenCode client:", error);
-  }
-}
-
 async function createChatTab() {
-  if (!opencodeServerReady) {
-    await initOpenCodeClient();
-    if (!opencodeServerReady) {
-      setTimeout(() => createChatTab(), 1000);
-      return;
-    }
-  }
-
+  console.log("Creating chat tab...");
   const tabId = `chat-${crypto.randomUUID()}`;
   const tabName = `Chat ${nextChatIndex++}`;
 
@@ -681,11 +714,20 @@ async function createChatTab() {
   renderTabBar();
 
   try {
+    console.log("Initializing OpenCode client, port:", opencodeServerPort);
+    await initOpenCodeClient();
+    console.log("OpenCode client initialized, creating session on port:", opencodeServerPort);
+
     const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     });
-    const session = await resp.json();
+    console.log("Session creation response status:", resp.status);
+    const text = await resp.text();
+    console.log("Session creation response body:", text);
+    const session = JSON.parse(text);
+    console.log("Session created:", session);
     newTab.sessionId = session.id;
   } catch (error) {
     console.error("Failed to create chat session:", error);
@@ -701,11 +743,16 @@ async function createChatTab() {
 }
 
 function renderChatMessages(tab: ChatTab) {
+  console.log("renderChatMessages called, messages count:", tab.messages.length);
   const chatMessages = document.getElementById("chat-messages");
-  if (!chatMessages) return;
+  if (!chatMessages) {
+    console.error("chat-messages element not found");
+    return;
+  }
 
   chatMessages.innerHTML = '';
-  tab.messages.forEach(msg => {
+  tab.messages.forEach((msg, idx) => {
+    console.log(`Rendering message ${idx}:`, msg.role, msg.content.substring(0, 50));
     const msgEl = document.createElement("div");
     msgEl.className = `chat-message ${msg.role}`;
     const content = msg.role === 'assistant'
@@ -729,47 +776,41 @@ async function sendChatMessage(text: string) {
   const tab = getActiveTab();
   if (!tab || !isChatTab(tab) || tab.isStreaming || !tab.sessionId) return;
 
+  console.log("Sending message to session:", tab.sessionId, "text:", text);
+
   tab.messages.push({ role: 'user', content: text, timestamp: Date.now() });
   tab.isStreaming = true;
   renderChatMessages(tab);
 
   try {
-    const eventSource = new EventSource(`http://127.0.0.1:${opencodeServerPort}/event`);
-
-    let assistantMessage = '';
-    const assistantMsgIndex = tab.messages.length;
-
-    tab.messages.push({ role: 'assistant', content: '', timestamp: Date.now() });
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.session_id === tab.sessionId && data.type === 'message.part') {
-          assistantMessage += data.content || '';
-          tab.messages[assistantMsgIndex].content = assistantMessage;
-          renderChatMessages(tab);
-        }
-        if (data.type === 'message.completed' && data.session_id === tab.sessionId) {
-          eventSource.close();
-          tab.isStreaming = false;
-          renderChatMessages(tab);
-        }
-      } catch (e) {}
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-      tab.isStreaming = false;
-      renderChatMessages(tab);
-    };
-
-    await fetch(`http://127.0.0.1:${opencodeServerPort}/session/${tab.sessionId}/message`, {
+    console.log("Sending POST to /session/{id}/message");
+    const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session/${tab.sessionId}/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         parts: [{ type: 'text', text }],
       }),
     });
+    
+    console.log("Message POST response status:", resp.status);
+    const data = await resp.json();
+    console.log("POST response data:", JSON.stringify(data));
+    
+    // Extract text from parts
+    let assistantText = '';
+    if (data.parts && Array.isArray(data.parts)) {
+      for (const part of data.parts) {
+        if (part.type === 'text' && part.text) {
+          assistantText += part.text;
+        }
+      }
+    }
+    
+    console.log("Extracted assistant text:", assistantText.substring(0, 100));
+    tab.messages.push({ role: 'assistant', content: assistantText, timestamp: Date.now() });
+    tab.isStreaming = false;
+    renderChatMessages(tab);
+    
   } catch (error) {
     console.error("Failed to send message:", error);
     tab.isStreaming = false;

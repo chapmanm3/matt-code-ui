@@ -35,14 +35,5 @@
       "icons/icon.ico"
     ]
   },
-    "plugins": {
-      "shell": {
-        "scope": [
-          {
-            "name": "opencode",
-            "cmd": "opencode"
-          }
-        ]
-      }
-    }
+    "plugins": {}
   }
