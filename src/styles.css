@@ -37,6 +37,12 @@ html, body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 0.3s ease, min-width 0.3s ease;
+}
+
+#sidebar.collapsed {
+  width: 40px !important;
+  min-width: 40px !important;
 }
 
 .sidebar-header {
@@ -539,8 +545,8 @@ html, body {
 }
 
 .collapsible-sidebar.collapsed {
-  width: 40px;
-  min-width: 40px;
+  width: 40px !important;
+  min-width: 40px !important;
 }
 
 .collapsible-sidebar.collapsed .sidebar-title,
