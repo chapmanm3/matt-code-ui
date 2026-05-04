@@ -532,3 +532,43 @@ html, body {
 .session-item:hover .session-item-delete {
   display: inline;
 }
+
+.collapsible-sidebar {
+  position: relative;
+  transition: width 0.3s ease, min-width 0.3s ease;
+}
+
+.collapsible-sidebar.collapsed {
+  width: 40px;
+  min-width: 40px;
+}
+
+.collapsible-sidebar.collapsed .sidebar-title,
+.collapsible-sidebar.collapsed .current-path,
+.collapsible-sidebar.collapsed .file-list,
+.collapsible-sidebar.collapsed .session-list,
+.collapsible-sidebar.collapsed .new-session-btn {
+  display: none;
+}
+
+.collapse-btn {
+  background: none;
+  border: none;
+  color: #ffffff66;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: transform 0.3s ease;
+}
+
+.collapse-btn:hover {
+  color: #ffffff;
+}
+
+.collapsible-sidebar.collapsed .collapse-btn {
+  transform: rotate(180deg);
+}
+
+.collapsible-sidebar.collapsed .sidebar-header {
+  justify-content: center;
+}

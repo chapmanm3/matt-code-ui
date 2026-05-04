@@ -10,15 +10,17 @@
 
   <body>
     <div id="app">
-      <aside id="sidebar">
+      <aside id="sidebar" class="collapsible-sidebar">
         <div class="sidebar-header">
+          <button class="collapse-btn" data-target="sidebar" title="Toggle Files">‹</button>
           <span class="sidebar-title">Files</span>
         </div>
         <div id="current-path" class="current-path"></div>
         <div id="file-list" class="file-list"></div>
       </aside>
-      <aside id="session-sidebar" class="session-sidebar">
+      <aside id="session-sidebar" class="session-sidebar collapsible-sidebar">
         <div class="sidebar-header">
+          <button class="collapse-btn" data-target="session-sidebar" title="Toggle Sessions">‹</button>
           <span class="sidebar-title">Sessions</span>
           <button id="new-session-btn" class="new-session-btn" title="New Session">+</button>
         </div>

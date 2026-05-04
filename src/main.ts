@@ -1061,6 +1061,25 @@ window.addEventListener("DOMContentLoaded", async () => {
       await initOpenCodeClient();
       loadSessions();
     }, 1000);
+
+    // Collapsible sidebars
+    document.querySelectorAll(".collapse-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const targetId = (btn as HTMLElement).dataset.target;
+        if (!targetId) return;
+        const sidebar = document.getElementById(targetId);
+        if (sidebar) {
+          sidebar.classList.toggle("collapsed");
+          // Fit terminal if needed
+          setTimeout(() => {
+            const tab = getActiveTab();
+            if (tab && isTerminalTab(tab) && tab.fitAddon) {
+              tab.fitAddon.fit();
+            }
+          }, 300);
+        }
+      });
+    });
   } catch (error) {
     console.error("Error initializing:", error);
   }
