@@ -48,6 +48,13 @@ html, body {
 .sidebar-header {
   padding: 10px 16px;
   border-bottom: 1px solid #ffffff18;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.collapsible-sidebar .sidebar-header {
+  justify-content: space-between;
 }
 
 .sidebar-title {
