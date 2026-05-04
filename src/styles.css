@@ -456,3 +456,79 @@ html, body {
 .chat-send:hover {
   background-color: #2a4a6c;
 }
+
+.session-sidebar {
+  width: 200px;
+  min-width: 160px;
+  background-color: #0f1117;
+  border-right: 1px solid #ffffff18;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.session-sidebar .sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.new-session-btn {
+  background: none;
+  border: none;
+  color: #e0e0e0;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 8px;
+}
+
+.new-session-btn:hover {
+  color: #ffffff;
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.session-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.2s;
+}
+
+.session-item:hover {
+  background-color: #ffffff0a;
+}
+
+.session-item.active {
+  background-color: #1a3a5c20;
+  border-left-color: #1a3a5c;
+}
+
+.session-item-title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e0e0e0;
+}
+
+.session-item-time {
+  font-size: 11px;
+  color: #ffffff66;
+  margin-top: 2px;
+}
+
+.session-item-delete {
+  float: right;
+  display: none;
+  color: #ff5555;
+  cursor: pointer;
+}
+
+.session-item:hover .session-item-delete {
+  display: inline;
+}

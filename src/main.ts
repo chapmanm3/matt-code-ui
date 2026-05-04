@@ -58,6 +58,16 @@ interface ChatMessage {
   timestamp: number;
 }
 
+interface SessionInfo {
+  id: string;
+  title: string;
+  slug: string;
+  time: {
+    created: number;
+    updated: number;
+  };
+}
+
 interface ChatTab {
   id: string;
   type: 'chat';
@@ -135,6 +145,149 @@ async function initOpenCodeClient() {
   }
 
   return opencodeReadyPromise;
+}
+
+async function fetchSessions(): Promise<SessionInfo[]> {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session`);
+    if (!resp.ok) {
+      console.error("Failed to fetch sessions:", resp.status);
+      return [];
+    }
+    const sessions: SessionInfo[] = await resp.json();
+    console.log("Fetched sessions:", sessions.length);
+    return sessions;
+  } catch (error) {
+    console.error("Error fetching sessions:", error);
+    return [];
+  }
+}
+
+function loadSessions() {
+  fetchSessions().then(sessions => {
+    const sessionList = document.getElementById("session-list");
+    if (!sessionList) return;
+
+    sessionList.innerHTML = '';
+    sessions.forEach(session => {
+      const sessionEl = document.createElement("div");
+      sessionEl.className = "session-item";
+      sessionEl.dataset.sessionId = session.id;
+
+      // Check if this session is currently active
+      const activeTab = tabs.find(t => isChatTab(t) && t.sessionId === session.id);
+      if (activeTab) {
+        sessionEl.classList.add("active");
+      }
+
+      const date = new Date(session.time.updated);
+      const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      sessionEl.innerHTML = `
+        <div class="session-item-title">${session.title || 'Untitled'}</div>
+        <div class="session-item-time">${timeStr}</div>
+        <span class="session-item-delete" data-session-id="${session.id}">×</span>
+      `;
+
+      sessionEl.addEventListener("click", (e) => {
+        if ((e.target as HTMLElement).classList.contains("session-item-delete")) return;
+        switchToSession(session);
+      });
+
+      const deleteBtn = sessionEl.querySelector(".session-item-delete");
+      deleteBtn?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (confirm(`Delete session "${session.title}"?`)) {
+          deleteSession(session.id);
+        }
+      });
+
+      sessionList.appendChild(sessionEl);
+    });
+  });
+}
+
+async function switchToSession(session: SessionInfo) {
+  console.log("Switching to session:", session.id, session.title);
+
+  // Check if we already have a tab for this session
+  const existingTab = tabs.find(t => isChatTab(t) && t.sessionId === session.id) as ChatTab | undefined;
+  if (existingTab) {
+    await switchTab(existingTab.id);
+    return;
+  }
+
+  // Create a new tab for this session
+  const tabId = `chat-${crypto.randomUUID()}`;
+  const newTab: ChatTab = {
+    id: tabId,
+    type: 'chat',
+    name: session.title || 'Untitled',
+    sessionId: session.id,
+    messages: [],
+    isStreaming: false,
+    unlistenEvent: null,
+    isInitialized: true,
+  };
+
+  tabs.push(newTab);
+  activeTabId = tabId;
+  renderTabBar();
+  renderActiveContent();
+  updateStatusBar();
+
+  // Load messages for this session
+  loadSessionMessages(session.id);
+}
+
+async function loadSessionMessages(sessionId: string) {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session/${sessionId}/message`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    console.log("Loaded messages:", data.length);
+
+    const tab = tabs.find(t => isChatTab(t) && t.sessionId === sessionId) as ChatTab | undefined;
+    if (!tab) return;
+
+    tab.messages = [];
+    data.forEach((msg: any) => {
+      const role = msg.info.role === 'user' ? 'user' : 'assistant';
+      let content = '';
+      if (msg.parts && Array.isArray(msg.parts)) {
+        for (const part of msg.parts) {
+          if (part.type === 'text' && part.text) {
+            content += part.text;
+          }
+        }
+      }
+      tab.messages.push({ role, content, timestamp: msg.info.time?.created || Date.now() });
+    });
+
+    renderChatMessages(tab);
+  } catch (error) {
+    console.error("Error loading session messages:", error);
+  }
+}
+
+async function deleteSession(sessionId: string) {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session/${sessionId}`, {
+      method: 'DELETE',
+    });
+    if (resp.ok) {
+      console.log("Deleted session:", sessionId);
+      loadSessions();
+
+      // Close tab if open
+      const tab = tabs.find(t => isChatTab(t) && t.sessionId === sessionId);
+      if (tab) {
+        await closeTab(tab.id);
+      }
+    }
+  } catch (error) {
+    console.error("Error deleting session:", error);
+  }
 }
 
 function getActiveTab(): Tab | undefined {
@@ -724,11 +877,14 @@ async function createChatTab() {
       body: JSON.stringify({}),
     });
     console.log("Session creation response status:", resp.status);
-    const text = await resp.text();
-    console.log("Session creation response body:", text);
-    const session = JSON.parse(text);
-    console.log("Session created:", session);
+    const session = await resp.json();
+    console.log("Session created:", JSON.stringify(session));
     newTab.sessionId = session.id;
+    if (session.title) {
+      newTab.name = session.title;
+      // Re-render tab bar with the new title
+      renderTabBar();
+    }
   } catch (error) {
     console.error("Failed to create chat session:", error);
     newTab.messages.push({
@@ -895,6 +1051,16 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     wireAppKeydownHandler();
+
+    // Initialize session sidebar
+    const newSessionBtn = document.getElementById("new-session-btn");
+    newSessionBtn?.addEventListener("click", () => createChatTab());
+
+    // Load sessions after OpenCode client is ready
+    setTimeout(async () => {
+      await initOpenCodeClient();
+      loadSessions();
+    }, 1000);
   } catch (error) {
     console.error("Error initializing:", error);
   }
