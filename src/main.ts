@@ -55,10 +55,10 @@ let activeTabId: string = "";
 let nextTabIndex: number = 1;
 let config: Config = {
   keybinds: {
-    next_tab: "Alt+Tab",
-    prev_tab: "Alt+Shift+Tab",
-    new_terminal: "Alt+T",
-    close_terminal: "Alt+W",
+    next_tab: "Ctrl+Tab",
+    prev_tab: "Ctrl+Shift+Tab",
+    new_terminal: "Ctrl+T",
+    close_terminal: "Ctrl+W",
   }
 };
 
@@ -80,14 +80,50 @@ function matchesKeybind(e: KeyboardEvent, keybind: string): boolean {
   const key = parts[parts.length - 1];
   const hasAlt = parts.includes("alt");
   const hasShift = parts.includes("shift");
-  const hasMeta = parts.includes("meta") || parts.includes("cmd");
+  const hasCtrl = parts.includes("ctrl");
 
   return (
     e.key.toLowerCase() === key &&
     e.altKey === hasAlt &&
     e.shiftKey === hasShift &&
-    (e.metaKey || e.ctrlKey) === hasMeta
+    e.ctrlKey === hasCtrl
   );
+}
+
+function wireAppKeydownHandler() {
+  document.addEventListener("keydown", async (e) => {
+    const currentIndex = tabs.findIndex(t => t.id === activeTabId);
+
+    if (matchesKeybind(e, config.keybinds.next_tab)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
+      await switchTab(tabs[nextIndex].id);
+      return;
+    }
+
+    if (matchesKeybind(e, config.keybinds.prev_tab)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
+      await switchTab(tabs[prevIndex].id);
+      return;
+    }
+
+    if (matchesKeybind(e, config.keybinds.new_terminal)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      await createTab(false);
+      return;
+    }
+
+    if (matchesKeybind(e, config.keybinds.close_terminal)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      await closeTab(activeTabId);
+      return;
+    }
+  }, { capture: true });
 }
 
 async function loadDirectory(path: string) {
@@ -570,35 +606,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       ro.observe(terminalEl);
     }
 
-    window.addEventListener("keydown", async (e) => {
-      const currentIndex = tabs.findIndex(t => t.id === activeTabId);
-
-      if (matchesKeybind(e, config.keybinds.next_tab)) {
-        e.preventDefault();
-        const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
-        await switchTab(tabs[nextIndex].id);
-        return;
-      }
-
-      if (matchesKeybind(e, config.keybinds.prev_tab)) {
-        e.preventDefault();
-        const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
-        await switchTab(tabs[prevIndex].id);
-        return;
-      }
-
-      if (matchesKeybind(e, config.keybinds.new_terminal)) {
-        e.preventDefault();
-        await createTab(false);
-        return;
-      }
-
-      if (matchesKeybind(e, config.keybinds.close_terminal)) {
-        e.preventDefault();
-        await closeTab(activeTabId);
-        return;
-      }
-    });
+    wireAppKeydownHandler();
   } catch (error) {
     console.error("Error initializing:", error);
   }
