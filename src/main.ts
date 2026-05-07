@@ -4,12 +4,31 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { marked } from "marked";
+import hljs from "highlight.js";
+import "highlight.js/styles/github-dark.css";
+
+// Custom renderer for marked to add syntax highlighting
+const renderer = new marked.Renderer();
+renderer.code = function({ text, lang }: { text: string, lang?: string }) {
+  let highlighted: string;
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      highlighted = hljs.highlight(text, { language: lang }).value;
+    } catch {
+      highlighted = hljs.highlightAuto(text).value;
+    }
+  } else {
+    highlighted = hljs.highlightAuto(text).value;
+  }
+  const langClass = lang ? ` class="language-${lang}"` : '';
+  return `<pre><code${langClass}>${highlighted}</code></pre>`;
+};
+
+marked.use({ renderer });
 
 const ICON_FOLDER = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.5 4.5A1 1 0 012.5 3.5h3.086a1 1 0 01.707.293L7.5 5h6a1 1 0 011 1v6a1 1 0 01-1 1h-11a1 1 0 01-1-1V4.5z" fill="#e0e0e0" fill-opacity="0.7"/></svg>`;
 
 const ICON_FILE = `<svg width="16" height="16" viewBox="0 1 14 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 1.5h7l3 3V14.5H2V1.5z" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/><path d="M9 1.5V4.5h3" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/></svg>`;
-const ICON_CHEVRON_DOWN = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-const ICON_CHEVRON_RIGHT = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const ICON_CHAT = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h12a1 1 0 011 1v7a1 1 0 01-1 1H6l-3 3v-3H2a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="#e0e0e0" stroke-opacity="0.7" stroke-width="1.2" fill="none"/></svg>`;
 
 interface FileEntry {
@@ -68,6 +87,23 @@ interface SessionInfo {
   };
 }
 
+interface Provider {
+  id: string;
+  name: string;
+  models: { [key: string]: Model };
+}
+
+interface Model {
+  id: string;
+  name: string;
+  providerID?: string;
+}
+
+interface ProviderConfig {
+  providers: Provider[];
+  default: { [key: string]: string };
+}
+
 interface ChatTab {
   id: string;
   type: 'chat';
@@ -81,23 +117,14 @@ interface ChatTab {
 
 type Tab = TerminalTab | ChatTab;
 
-let currentPath: string = "";
 let tabs: Tab[] = [];
 let activeTabId: string = "";
-let nextTabIndex: number = 1;
-let nextChatIndex: number = 1;
-let config: Config = {
-  keybinds: {
-    next_tab: "Ctrl+Tab",
-    prev_tab: "Ctrl+Shift+Tab",
-    new_terminal: "Ctrl+T",
-    new_chat: "Ctrl+C",
-    close_terminal: "Ctrl+W",
-  }
-};
 let opencodeServerPort: number = 4096;
 let opencodeReadyPromise: Promise<void> | null = null;
 let opencodeReadyResolver: (() => void) | null = null;
+let providers: Provider[] = [];
+let defaultModels: { [key: string]: string } = {};
+let currentModel: { providerID: string; modelID: string } | null = null;
 
 async function initOpenCodeClient() {
   if (opencodeReadyPromise) {
@@ -174,7 +201,6 @@ function loadSessions() {
       sessionEl.className = "session-item";
       sessionEl.dataset.sessionId = session.id;
 
-      // Check if this session is currently active
       const activeTab = tabs.find(t => isChatTab(t) && t.sessionId === session.id);
       if (activeTab) {
         sessionEl.classList.add("active");
@@ -210,14 +236,12 @@ function loadSessions() {
 async function switchToSession(session: SessionInfo) {
   console.log("Switching to session:", session.id, session.title);
 
-  // Check if we already have a tab for this session
   const existingTab = tabs.find(t => isChatTab(t) && t.sessionId === session.id) as ChatTab | undefined;
   if (existingTab) {
     await switchTab(existingTab.id);
     return;
   }
 
-  // Create a new tab for this session
   const tabId = `chat-${crypto.randomUUID()}`;
   const newTab: ChatTab = {
     id: tabId,
@@ -236,7 +260,16 @@ async function switchToSession(session: SessionInfo) {
   renderActiveContent();
   updateStatusBar();
 
-  // Load messages for this session
+  // Reset to default model when switching sessions
+  if (providers.length > 0) {
+    const firstProvider = providers[0];
+    const defaultModelId = defaultModels[firstProvider.id];
+    if (defaultModelId) {
+      currentModel = { providerID: firstProvider.id, modelID: defaultModelId };
+    }
+  }
+  updateModelSelector();
+
   loadSessionMessages(session.id);
 }
 
@@ -279,7 +312,6 @@ async function deleteSession(sessionId: string) {
       console.log("Deleted session:", sessionId);
       loadSessions();
 
-      // Close tab if open
       const tab = tabs.find(t => isChatTab(t) && t.sessionId === sessionId);
       if (tab) {
         await closeTab(tab.id);
@@ -288,6 +320,79 @@ async function deleteSession(sessionId: string) {
   } catch (error) {
     console.error("Error deleting session:", error);
   }
+}
+
+async function fetchProviders(): Promise<ProviderConfig | null> {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/config/providers`);
+    if (!resp.ok) {
+      console.error("Failed to fetch providers:", resp.status);
+      return null;
+    }
+    const config: ProviderConfig = await resp.json();
+    providers = config.providers;
+    defaultModels = config.default;
+    console.log("Fetched providers:", providers.length);
+    return config;
+  } catch (error) {
+    console.error("Error fetching providers:", error);
+    return null;
+  }
+}
+
+function populateModelSelector() {
+  const selector = document.getElementById("model-selector") as HTMLSelectElement;
+  if (!selector) return;
+
+  selector.innerHTML = '';
+
+  if (providers.length === 0) {
+    selector.innerHTML = '<option value="">No models available</option>';
+    return;
+  }
+
+  providers.forEach(provider => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = provider.name;
+
+    // models is an object (key-value map), not an array
+    const modelsObj = provider.models;
+    Object.keys(modelsObj).forEach(modelKey => {
+      const model = modelsObj[modelKey];
+      const option = document.createElement("option");
+      option.value = JSON.stringify({ providerID: provider.id, modelID: model.id });
+      option.textContent = model.name || model.id;
+      optgroup.appendChild(option);
+    });
+
+    selector.appendChild(optgroup);
+  });
+
+  if (currentModel) {
+    const value = JSON.stringify(currentModel);
+    selector.value = value;
+  }
+}
+
+function updateModelSelector() {
+  populateModelSelector();
+
+  const selector = document.getElementById("model-selector") as HTMLSelectElement;
+  if (!selector) return;
+
+  selector.onchange = (e) => {
+    const target = e.target as HTMLSelectElement;
+    if (target.value) {
+      try {
+        currentModel = JSON.parse(target.value);
+        console.log("Model changed:", currentModel);
+      } catch (err) {
+        console.error("Failed to parse model selection:", err);
+      }
+    } else {
+      currentModel = null;
+    }
+  };
 }
 
 function getActiveTab(): Tab | undefined {
@@ -305,34 +410,10 @@ function isTerminalTab(tab: Tab): tab is TerminalTab {
 async function loadConfig() {
   try {
     const result = await invoke<Config>("read_config");
-    // Deep merge: preserve defaults, overlay loaded values, merge keybinds
-    config = {
-      ...config,
-      ...result,
-      keybinds: {
-        ...config.keybinds,
-        ...(result?.keybinds || {}),
-      },
-    };
+    console.log("Config loaded:", result);
   } catch (error) {
     console.error("Error loading config:", error);
   }
-}
-
-function matchesKeybind(e: KeyboardEvent, keybind: string): boolean {
-  if (!keybind) return false;
-  const parts = keybind.toLowerCase().split("+");
-  const key = parts[parts.length - 1];
-  const hasAlt = parts.includes("alt");
-  const hasShift = parts.includes("shift");
-  const hasCtrl = parts.includes("ctrl");
-
-  return (
-    e.key.toLowerCase() === key &&
-    e.altKey === hasAlt &&
-    e.shiftKey === hasShift &&
-    e.ctrlKey === hasCtrl
-  );
 }
 
 function wireAppKeydownHandler() {
@@ -340,19 +421,19 @@ function wireAppKeydownHandler() {
     const currentIndex = tabs.findIndex(t => t.id === activeTabId);
     const activeTab = getActiveTab();
 
-    if (matchesKeybind(e, config.keybinds.new_chat)) {
+    if (e.key === 'c' && e.ctrlKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
       if (activeTab && isTerminalTab(activeTab) && document.activeElement?.closest('#terminal')) {
         return;
       }
-      e.preventDefault();
-      e.stopImmediatePropagation();
       await createChatTab();
       return;
     }
 
-    if (matchesKeybind(e, config.keybinds.next_tab)) {
+    if (e.key === 'Tab' && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
@@ -360,7 +441,7 @@ function wireAppKeydownHandler() {
       return;
     }
 
-    if (matchesKeybind(e, config.keybinds.prev_tab)) {
+    if (e.key === 'Tab' && e.shiftKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
@@ -368,14 +449,14 @@ function wireAppKeydownHandler() {
       return;
     }
 
-    if (matchesKeybind(e, config.keybinds.new_terminal)) {
+    if (e.key === 't' && e.ctrlKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       await createTab(false);
       return;
     }
 
-    if (matchesKeybind(e, config.keybinds.close_terminal)) {
+    if (e.key === 'w' && e.ctrlKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       await closeTab(activeTabId);
@@ -394,6 +475,8 @@ async function loadDirectory(path: string) {
     console.error("Error loading directory:", error);
   }
 }
+
+let currentPath: string = "";
 
 function renderFileList(files: FileEntry[]) {
   const fileList = document.getElementById("file-list");
@@ -689,10 +772,7 @@ function renderActiveContent() {
     return;
   }
 
-  console.log("renderActiveContent, tab:", tab?.id, "isChatTab:", tab ? isChatTab(tab) : 'no tab');
-
   if (tab && isChatTab(tab)) {
-    console.log("Showing chat container");
     terminalEl.style.display = "none";
     chatEl.style.display = "flex";
     renderChatMessages(tab);
@@ -701,7 +781,6 @@ function renderActiveContent() {
       input?.focus();
     });
   } else if (tab && isTerminalTab(tab) && tab.terminal) {
-    console.log("Showing terminal");
     chatEl.style.display = "none";
     terminalEl.style.display = "";
     try {
@@ -721,13 +800,20 @@ function updateStatusBar() {
   if (!statusInfo) return;
 
   if (tab && isChatTab(tab)) {
-    statusInfo.textContent = "AI Chat - Type and press Enter to send";
+    let modelText = "";
+    if (currentModel) {
+      modelText = ` [${currentModel.providerID}/${currentModel.modelID}]`;
+    }
+    statusInfo.textContent = `AI Chat${modelText} - Type and press Enter to send`;
   } else if (tab && isTerminalTab(tab) && tab.isNeovim) {
     statusInfo.textContent = "nvim — click files to open | :tabn/:tabp navigate | :q close";
   } else {
     statusInfo.textContent = "Terminal - Ctrl+C interrupt, Ctrl+D exit";
   }
 }
+
+let nextTabIndex: number = 1;
+let nextChatIndex: number = 1;
 
 async function createTab(isNeovim: boolean = false) {
   const container = document.getElementById("terminal-container");
@@ -736,8 +822,6 @@ async function createTab(isNeovim: boolean = false) {
   container?.classList.remove("collapsed");
   container?.classList.add("full-height");
   if (mainContent) mainContent.style.display = "none";
-  const toggleBtn = document.getElementById("toggle-terminal");
-  if (toggleBtn) toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
 
   const tabId = `tab-${crypto.randomUUID()}`;
   const tabName = isNeovim ? `nvim ${nextTabIndex++}` : `Terminal ${nextTabIndex++}`;
@@ -775,8 +859,6 @@ async function createNeovimTab(filePath?: string): Promise<TerminalTab> {
   container?.classList.remove("collapsed");
   container?.classList.add("full-height");
   if (mainContent) mainContent.style.display = "none";
-  const toggleBtn = document.getElementById("toggle-terminal");
-  if (toggleBtn) toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
 
   const tabId = `tab-${crypto.randomUUID()}`;
   const tabName = `nvim ${nextTabIndex++}`;
@@ -882,9 +964,18 @@ async function createChatTab() {
     newTab.sessionId = session.id;
     if (session.title) {
       newTab.name = session.title;
-      // Re-render tab bar with the new title
       renderTabBar();
     }
+
+    // Set default model
+    if (providers.length >0) {
+      const firstProvider = providers[0];
+      const defaultModelId = defaultModels[firstProvider.id];
+      if (defaultModelId) {
+        currentModel = { providerID: firstProvider.id, modelID: defaultModelId };
+      }
+    }
+    updateModelSelector();
   } catch (error) {
     console.error("Failed to create chat session:", error);
     newTab.messages.push({
@@ -939,20 +1030,24 @@ async function sendChatMessage(text: string) {
   renderChatMessages(tab);
 
   try {
-    console.log("Sending POST to /session/{id}/message");
+    const body: any = {
+      parts: [{ type: 'text', text }],
+    };
+
+    if (currentModel) {
+      body.model = currentModel;
+    }
+
     const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session/${tab.sessionId}/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        parts: [{ type: 'text', text }],
-      }),
+      body: JSON.stringify(body),
     });
-    
+
     console.log("Message POST response status:", resp.status);
     const data = await resp.json();
     console.log("POST response data:", JSON.stringify(data));
-    
-    // Extract text from parts
+
     let assistantText = '';
     if (data.parts && Array.isArray(data.parts)) {
       for (const part of data.parts) {
@@ -961,12 +1056,12 @@ async function sendChatMessage(text: string) {
         }
       }
     }
-    
+
     console.log("Extracted assistant text:", assistantText.substring(0, 100));
     tab.messages.push({ role: 'assistant', content: assistantText, timestamp: Date.now() });
     tab.isStreaming = false;
     renderChatMessages(tab);
-    
+
   } catch (error) {
     console.error("Failed to send message:", error);
     tab.isStreaming = false;
@@ -978,36 +1073,6 @@ async function initFirstTab() {
   await createTab(false);
 }
 
-function toggleTerminal() {
-  const container = document.getElementById("terminal-container");
-  const mainContent = document.getElementById("main-content");
-  const toggleBtn = document.getElementById("toggle-terminal");
-  if (!container || !toggleBtn) return;
-
-  if (container.classList.contains("collapsed")) {
-    container.classList.remove("collapsed");
-    container.classList.remove("full-height");
-    if (mainContent) mainContent.style.display = "";
-    toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
-    container.addEventListener("transitionend", () => {
-      const tab = getActiveTab();
-      if (tab && isTerminalTab(tab) && tab.fitAddon) tab.fitAddon.fit();
-    }, { once: true });
-  } else if (container.classList.contains("full-height")) {
-    container.classList.remove("full-height");
-    if (mainContent) mainContent.style.display = "";
-    toggleBtn.innerHTML = ICON_CHEVRON_DOWN;
-    container.addEventListener("transitionend", () => {
-      const tab = getActiveTab();
-      if (tab && isTerminalTab(tab) && tab.fitAddon) tab.fitAddon.fit();
-    }, { once: true });
-  } else {
-    container.classList.add("collapsed");
-    container.classList.remove("full-height");
-    toggleBtn.innerHTML = ICON_CHEVRON_RIGHT;
-  }
-}
-
 window.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadConfig();
@@ -1016,35 +1081,48 @@ window.addEventListener("DOMContentLoaded", async () => {
     loadDirectory(cwd);
     await initFirstTab();
 
-    document.getElementById("toggle-terminal")?.addEventListener("click", toggleTerminal);
     document.querySelector(".new-tab")?.addEventListener("click", () => createTab(false));
     document.querySelector(".new-chat")?.addEventListener("click", () => createChatTab());
 
     const terminalEl = document.getElementById("terminal");
     if (terminalEl) {
+      let resizeTimeout: number | null = null;
       const ro = new ResizeObserver(() => {
-        const tab = getActiveTab();
-        if (tab && isTerminalTab(tab) && tab.fitAddon) tab.fitAddon.fit();
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        resizeTimeout = window.setTimeout(() => {
+          const tab = getActiveTab();
+          if (tab && isTerminalTab(tab) && tab.fitAddon) tab.fitAddon.fit();
+        }, 100);
       });
       ro.observe(terminalEl);
     }
 
-    const chatInput = document.getElementById("chat-input") as HTMLInputElement;
+    const chatInput = document.getElementById("chat-input") as HTMLTextAreaElement;
     const chatSend = document.getElementById("chat-send");
     if (chatInput && chatSend) {
+      const autoResize = () => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+      };
+
+      chatInput.addEventListener("input", autoResize);
+
       chatSend.addEventListener("click", () => {
         const text = chatInput.value.trim();
         if (text) {
           sendChatMessage(text);
           chatInput.value = '';
+          chatInput.style.height = 'auto';
         }
       });
       chatInput.addEventListener("keydown", (e) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
           const text = chatInput.value.trim();
           if (text) {
             sendChatMessage(text);
             chatInput.value = '';
+            chatInput.style.height = 'auto';
           }
         }
       });
@@ -1052,17 +1130,16 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     wireAppKeydownHandler();
 
-    // Initialize session sidebar
     const newSessionBtn = document.getElementById("new-session-btn");
     newSessionBtn?.addEventListener("click", () => createChatTab());
 
-    // Load sessions after OpenCode client is ready
     setTimeout(async () => {
       await initOpenCodeClient();
       loadSessions();
+      await fetchProviders();
+      updateModelSelector();
     }, 1000);
 
-    // Collapsible sidebars
     document.querySelectorAll(".collapse-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         const targetId = (btn as HTMLElement).dataset.target;
@@ -1070,7 +1147,6 @@ window.addEventListener("DOMContentLoaded", async () => {
         const sidebar = document.getElementById(targetId);
         if (sidebar) {
           sidebar.classList.toggle("collapsed");
-          // Fit terminal if needed
           setTimeout(() => {
             const tab = getActiveTab();
             if (tab && isTerminalTab(tab) && tab.fitAddon) {
