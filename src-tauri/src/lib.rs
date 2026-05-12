@@ -77,6 +77,13 @@ pub struct OpenCodeServerStatus {
     pub ready: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorktreeEntry {
+    pub path: String,
+    pub branch: String,
+    pub is_main: bool,
+}
+
 #[tauri::command]
 async fn start_opencode_server(
     app: AppHandle,
@@ -575,6 +582,151 @@ fn close_terminal(state: State<'_, TerminalStateHandle>, session_id: String) -> 
     Ok(())
 }
 
+#[tauri::command]
+fn git_find_repo_root(start_path: String) -> Result<String, String> {
+    let mut current = std::path::Path::new(&start_path).to_path_buf();
+    loop {
+        let git_path = current.join(".git");
+        if git_path.exists() {
+            return Ok(current.to_string_lossy().to_string());
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    Err("Not a git repository".to_string())
+}
+
+fn parse_worktree_list(output: &str, repo_root: &str) -> Vec<WorktreeEntry> {
+    let mut entries = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+
+    // Check if repo_root itself is the main worktree (has .git directory, not file)
+    let is_main_worktree = std::path::Path::new(repo_root).join(".git").is_dir();
+
+    for line in output.lines() {
+        if line.starts_with("worktree ") {
+            // Save previous entry if exists
+            if let Some(path) = current_path.take() {
+                let branch = current_branch.take().unwrap_or_else(|| "detached HEAD".to_string());
+                entries.push(WorktreeEntry {
+                    path: path.clone(),
+                    branch,
+                    is_main: is_main_worktree && path == repo_root,
+                });
+            }
+            current_path = Some(line[9..].to_string());
+        } else if line.starts_with("branch ") {
+            let branch_ref = &line[7..];
+            let branch_name = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
+            current_branch = Some(branch_name.to_string());
+        }
+    }
+
+    // Don't forget the last entry
+    if let Some(path) = current_path {
+        let branch = current_branch.unwrap_or_else(|| "detached HEAD".to_string());
+        entries.push(WorktreeEntry {
+            path: path.clone(),
+            branch,
+            is_main: is_main_worktree && path == repo_root,
+        });
+    }
+
+    // Sort: main first, then by branch name
+    entries.sort_by(|a, b| {
+        if a.is_main && !b.is_main {
+            std::cmp::Ordering::Less
+        } else if !a.is_main && b.is_main {
+            std::cmp::Ordering::Greater
+        } else {
+            a.branch.cmp(&b.branch)
+        }
+    });
+
+    entries
+}
+
+#[tauri::command]
+fn git_worktree_list(repo_path: String) -> Result<Vec<WorktreeEntry>, String> {
+    let output = std::process::Command::new("git")
+        .arg("worktree")
+        .arg("list")
+        .arg("--porcelain")
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git worktree list: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git worktree list failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_worktree_list(&stdout, &repo_path))
+}
+
+#[tauri::command]
+fn git_worktree_add(
+    repo_path: String,
+    worktree_path: String,
+    branch: Option<String>,
+) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("worktree").arg("add");
+
+    if let Some(ref branch_name) = branch {
+        cmd.arg("-b").arg(branch_name);
+    }
+
+    cmd.arg(&worktree_path);
+
+    if branch.is_some() {
+        cmd.arg("HEAD");
+    }
+
+    let output = cmd
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git worktree add: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git worktree add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn git_get_current_branch(worktree_path: String) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .arg("branch")
+        .arg("--show-current")
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("Failed to run git branch: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git branch --show-current failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() {
+        Ok("detached HEAD".to_string())
+    } else {
+        Ok(branch)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let terminal_state: TerminalStateHandle = Arc::new(Mutex::new(TerminalState::default()));
@@ -601,6 +753,10 @@ pub fn run() {
             start_opencode_server,
             stop_opencode_server,
             get_opencode_server_status,
+            git_find_repo_root,
+            git_worktree_list,
+            git_worktree_add,
+            git_get_current_branch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

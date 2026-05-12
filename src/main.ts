@@ -115,16 +115,42 @@ interface ChatTab {
   isInitialized: boolean;
 }
 
+interface WorktreeEntry {
+  path: string;
+  branch: string;
+  is_main: boolean;
+}
+
+interface WorktreeSession {
+  id: string;
+  path: string;
+  branch: string;
+  isMain: boolean;
+  tabs: Tab[];
+  activeTabId: string;
+  nextTabIndex: number;
+  nextChatIndex: number;
+  isInitialized: boolean;
+}
+
 type Tab = TerminalTab | ChatTab;
 
-let tabs: Tab[] = [];
-let activeTabId: string = "";
 let opencodeServerPort: number = 4096;
 let opencodeReadyPromise: Promise<void> | null = null;
 let opencodeReadyResolver: (() => void) | null = null;
 let providers: Provider[] = [];
 let defaultModels: { [key: string]: string } = {};
 let currentModel: { providerID: string; modelID: string } | null = null;
+
+let worktreeSessions: WorktreeSession[] = [];
+let activeWorktreeSessionId: string | null = null;
+let isGitRepo: boolean = true;
+
+function getActiveWorktreeSession(): WorktreeSession {
+  const session = worktreeSessions.find(s => s.id === activeWorktreeSessionId);
+  if (!session) throw new Error("No active worktree session");
+  return session;
+}
 
 async function initOpenCodeClient() {
   if (opencodeReadyPromise) {
@@ -199,9 +225,11 @@ function loadSessions() {
     sessions.forEach(session => {
       const sessionEl = document.createElement("div");
       sessionEl.className = "session-item";
-      sessionEl.dataset.sessionId = session.id;
 
-      const activeTab = tabs.find(t => isChatTab(t) && t.sessionId === session.id);
+      // Check if this session's chat tab exists in the active worktree session
+      const activeSession = getActiveWorktreeSession();
+      const activeTab = activeSession.tabs.find(t => isChatTab(t) && t.sessionId === session.id);
+
       if (activeTab) {
         sessionEl.classList.add("active");
       }
@@ -235,8 +263,9 @@ function loadSessions() {
 
 async function switchToSession(session: SessionInfo) {
   console.log("Switching to session:", session.id, session.title);
+  const activeSession = getActiveWorktreeSession();
 
-  const existingTab = tabs.find(t => isChatTab(t) && t.sessionId === session.id) as ChatTab | undefined;
+  const existingTab = activeSession.tabs.find(t => isChatTab(t) && t.sessionId === session.id) as ChatTab | undefined;
   if (existingTab) {
     await switchTab(existingTab.id);
     return;
@@ -254,14 +283,14 @@ async function switchToSession(session: SessionInfo) {
     isInitialized: true,
   };
 
-  tabs.push(newTab);
-  activeTabId = tabId;
+  activeSession.tabs.push(newTab);
+  activeSession.activeTabId = tabId;
   renderTabBar();
   renderActiveContent();
   updateStatusBar();
 
   // Reset to default model when switching sessions
-  if (providers.length > 0) {
+  if (providers.length >0) {
     const firstProvider = providers[0];
     const defaultModelId = defaultModels[firstProvider.id];
     if (defaultModelId) {
@@ -280,7 +309,8 @@ async function loadSessionMessages(sessionId: string) {
     const data = await resp.json();
     console.log("Loaded messages:", data.length);
 
-    const tab = tabs.find(t => isChatTab(t) && t.sessionId === sessionId) as ChatTab | undefined;
+    const session = getActiveWorktreeSession();
+    const tab = session.tabs.find(t => isChatTab(t) && t.sessionId === sessionId) as ChatTab | undefined;
     if (!tab) return;
 
     tab.messages = [];
@@ -308,15 +338,16 @@ async function deleteSession(sessionId: string) {
     const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session/${sessionId}`, {
       method: 'DELETE',
     });
-    if (resp.ok) {
-      console.log("Deleted session:", sessionId);
-      loadSessions();
+      if (resp.ok) {
+        console.log("Deleted session:", sessionId);
+        loadSessions();
 
-      const tab = tabs.find(t => isChatTab(t) && t.sessionId === sessionId);
-      if (tab) {
-        await closeTab(tab.id);
+        const session = getActiveWorktreeSession();
+        const tab = session.tabs.find(t => isChatTab(t) && t.sessionId === sessionId);
+        if (tab) {
+          await closeTab(tab.id);
+        }
       }
-    }
   } catch (error) {
     console.error("Error deleting session:", error);
   }
@@ -396,7 +427,8 @@ function updateModelSelector() {
 }
 
 function getActiveTab(): Tab | undefined {
-  return tabs.find(t => t.id === activeTabId);
+  const session = getActiveWorktreeSession();
+  return session.tabs.find(t => t.id === session.activeTabId);
 }
 
 function isChatTab(tab: Tab): tab is ChatTab {
@@ -418,8 +450,41 @@ async function loadConfig() {
 
 function wireAppKeydownHandler() {
   document.addEventListener("keydown", async (e) => {
-    const currentIndex = tabs.findIndex(t => t.id === activeTabId);
+    const session = getActiveWorktreeSession();
+    const currentIndex = session.tabs.findIndex(t => t.id === session.activeTabId);
     const activeTab = getActiveTab();
+
+    // Ctrl+Alt+Left: Switch to previous worktree session
+    if (e.key === 'ArrowLeft' && e.ctrlKey && e.altKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!isGitRepo) return;
+      const sessionIndex = worktreeSessions.findIndex(s => s.id === activeWorktreeSessionId);
+      const prevIndex = sessionIndex > 0 ? sessionIndex - 1 : worktreeSessions.length - 1;
+      await switchWorktreeSession(worktreeSessions[prevIndex].id);
+      return;
+    }
+
+    // Ctrl+Alt+Right: Switch to next worktree session
+    if (e.key === 'ArrowRight' && e.ctrlKey && e.altKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!isGitRepo) return;
+      const sessionIndex = worktreeSessions.findIndex(s => s.id === activeWorktreeSessionId);
+      const nextIndex = sessionIndex < worktreeSessions.length - 1 ? sessionIndex + 1 : 0;
+      await switchWorktreeSession(worktreeSessions[nextIndex].id);
+      return;
+    }
+
+    // Ctrl+Shift+N: New worktree
+    if (e.key === 'n' && e.ctrlKey && e.shiftKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!isGitRepo) return;
+      const modal = document.getElementById("worktree-modal");
+      if (modal) modal.style.display = "flex";
+      return;
+    }
 
     if (e.key === 'c' && e.ctrlKey) {
       e.preventDefault();
@@ -436,16 +501,16 @@ function wireAppKeydownHandler() {
     if (e.key === 'Tab' && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
-      await switchTab(tabs[nextIndex].id);
+      const nextIndex = currentIndex < session.tabs.length - 1 ? currentIndex + 1 : 0;
+      await switchTab(session.tabs[nextIndex].id);
       return;
     }
 
-    if (e.key === 'Tab' && e.shiftKey) {
+    if (e.key === 'Tab' && e.shiftKey && !e.altKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
-      await switchTab(tabs[prevIndex].id);
+      const prevIndex = currentIndex > 0 ? currentIndex - 1 : session.tabs.length - 1;
+      await switchTab(session.tabs[prevIndex].id);
       return;
     }
 
@@ -459,7 +524,7 @@ function wireAppKeydownHandler() {
     if (e.key === 'w' && e.ctrlKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      await closeTab(activeTabId);
+      await closeTab(session.activeTabId);
       return;
     }
   }, { capture: true });
@@ -522,15 +587,16 @@ function renderTabBar() {
   const existingTabs = tabBar.querySelectorAll(".tab");
   existingTabs.forEach(t => t.remove());
 
-  tabs.forEach(tab => {
+  const session = getActiveWorktreeSession();
+  session.tabs.forEach(tab => {
     const tabEl = document.createElement("div");
-    tabEl.className = `tab ${tab.id === activeTabId ? "active" : ""}`;
+    tabEl.className = `tab ${tab.id === session.activeTabId ? "active" : ""}`;
     tabEl.dataset.tabId = tab.id;
     const icon = isChatTab(tab) ? ICON_CHAT : '';
     tabEl.innerHTML = `
       <span class="tab-icon">${icon}</span>
       <span class="tab-name">${tab.name}</span>
-      ${tabs.length > 1 ? '<span class="tab-close">×</span>' : ''}
+      ${session.tabs.length > 1 ? '<span class="tab-close">×</span>' : ''}
     `;
     tabEl.addEventListener("click", (e) => {
       if ((e.target as HTMLElement).classList.contains("tab-close")) {
@@ -544,14 +610,15 @@ function renderTabBar() {
 }
 
 async function switchTab(tabId: string) {
-  const newTab = tabs.find(t => t.id === tabId);
+  const session = getActiveWorktreeSession();
+  const newTab = session.tabs.find(t => t.id === tabId);
   if (!newTab) return;
 
   if (isTerminalTab(newTab) && !newTab.isInitialized) {
     await initializeTab(newTab);
   }
 
-  activeTabId = tabId;
+  session.activeTabId = tabId;
   renderTabBar();
   renderActiveContent();
   updateStatusBar();
@@ -600,6 +667,7 @@ async function initializeTab(tab: TerminalTab) {
   const terminalEl = document.getElementById("terminal");
   if (!terminalEl || !tab.id) return;
 
+  const session = getActiveWorktreeSession();
   terminalEl.innerHTML = "";
 
   const { terminal, fitAddon } = makeTerminal();
@@ -636,10 +704,10 @@ async function initializeTab(tab: TerminalTab) {
 
     const unlistenExit = await listen(`terminal-exited-${sessionId}`, () => {
       terminal.writeln("\r\n[Process exited]");
-      const tabStillExists = tabs.some(t => t.id === tab.id);
-      if (tabStillExists && tabs.length > 1) {
+      const tabStillExists = session.tabs.some(t => t.id === tab.id);
+      if (tabStillExists && session.tabs.length > 1) {
         setTimeout(() => {
-          if (tabs.some(t => t.id === tab.id)) {
+          if (session.tabs.some(t => t.id === tab.id)) {
             closeTab(tab.id);
           }
         }, 500);
@@ -689,10 +757,11 @@ async function initializeNeovimTab(tab: TerminalTab, filePath?: string) {
 
     const unlistenExit = await listen(`terminal-exited-${result.session_id}`, () => {
       terminal.writeln("\r\n[Neovim exited]");
-      const tabStillExists = tabs.some(t => t.id === tab.id);
-      if (tabStillExists && tabs.length > 1) {
+      const session = getActiveWorktreeSession();
+      const tabStillExists = session.tabs.some(t => t.id === tab.id);
+      if (tabStillExists && session.tabs.length > 1) {
         setTimeout(() => {
-          if (tabs.some(t => t.id === tab.id)) closeTab(tab.id);
+          if (session.tabs.some(t => t.id === tab.id)) closeTab(tab.id);
         }, 500);
       }
     });
@@ -708,12 +777,13 @@ async function initializeNeovimTab(tab: TerminalTab, filePath?: string) {
 }
 
 async function closeTab(tabId: string) {
-  if (tabs.length <= 1) return;
+  const session = getActiveWorktreeSession();
+  if (session.tabs.length <= 1) return;
 
-  const tabIndex = tabs.findIndex(t => t.id === tabId);
+  const tabIndex = session.tabs.findIndex(t => t.id === tabId);
   if (tabIndex === -1) return;
 
-  const tab = tabs[tabIndex];
+  const tab = session.tabs[tabIndex];
 
   if (isChatTab(tab)) {
     if (tab.unlistenEvent) {
@@ -746,16 +816,16 @@ async function closeTab(tabId: string) {
     }
   }
 
-  tabs.splice(tabIndex, 1);
+  session.tabs.splice(tabIndex, 1);
 
-  if (activeTabId === tabId) {
-    const newIndex = Math.min(tabIndex, tabs.length - 1);
-    activeTabId = tabs[newIndex].id;
+  if (session.activeTabId === tabId) {
+    const newIndex = Math.min(tabIndex, session.tabs.length - 1);
+    session.activeTabId = session.tabs[newIndex].id;
   }
 
   renderTabBar();
 
-  const newActiveTab = tabs.find(t => t.id === activeTabId);
+  const newActiveTab = session.tabs.find(t => t.id === session.activeTabId);
   if (newActiveTab && isTerminalTab(newActiveTab) && !newActiveTab.isInitialized) {
     await initializeTab(newActiveTab);
   }
@@ -812,19 +882,199 @@ function updateStatusBar() {
   }
 }
 
-let nextTabIndex: number = 1;
-let nextChatIndex: number = 1;
+// Worktree Functions
+
+async function loadWorktrees() {
+  try {
+    const repoRoot = await invoke<string>("git_find_repo_root", { startPath: currentPath || "." });
+    const worktrees = await invoke<WorktreeEntry[]>("git_worktree_list", { repoPath: repoRoot });
+
+    worktreeSessions = worktrees.map(w => ({
+      id: `worktree-${crypto.randomUUID()}`,
+      path: w.path,
+      branch: w.branch,
+      isMain: w.is_main,
+      tabs: [],
+      activeTabId: "",
+      nextTabIndex: 1,
+      nextChatIndex: 1,
+      isInitialized: false,
+    }));
+
+    isGitRepo = true;
+
+    // If no worktrees found, create default from current dir
+    if (worktreeSessions.length === 0) {
+      worktreeSessions.push({
+        id: `worktree-${crypto.randomUUID()}`,
+        path: currentPath,
+        branch: await invoke<string>("git_get_current_branch", { worktreePath: currentPath }),
+        isMain: true,
+        tabs: [],
+        activeTabId: "",
+        nextTabIndex: 1,
+        nextChatIndex: 1,
+        isInitialized: false,
+      });
+    }
+
+    // Set first worktree as active
+    if (worktreeSessions.length > 0 && !activeWorktreeSessionId) {
+      activeWorktreeSessionId = worktreeSessions[0].id;
+    }
+
+    renderWorktreeList();
+  } catch (error) {
+    console.log("Not a git repository:", error);
+    isGitRepo = false;
+
+    // Create default session for non-git repos
+    worktreeSessions = [{
+      id: `worktree-${crypto.randomUUID()}`,
+      path: currentPath,
+      branch: "",
+      isMain: true,
+      tabs: [],
+      activeTabId: "",
+      nextTabIndex: 1,
+      nextChatIndex: 1,
+      isInitialized: false,
+    }];
+    activeWorktreeSessionId = worktreeSessions[0].id;
+
+    renderWorktreeList();
+  }
+}
+
+function renderWorktreeList() {
+  const worktreeList = document.getElementById("worktree-list");
+  const worktreeEmpty = document.getElementById("worktree-empty");
+  const newBtn = document.getElementById("new-worktree-btn") as HTMLButtonElement;
+
+  if (!worktreeList) return;
+
+  if (!isGitRepo) {
+    if (worktreeEmpty) worktreeEmpty.style.display = "block";
+    worktreeList.style.display = "none";
+    if (newBtn) newBtn.disabled = true;
+    return;
+  }
+
+  if (worktreeEmpty) worktreeEmpty.style.display = "none";
+  worktreeList.style.display = "block";
+  if (newBtn) newBtn.disabled = false;
+
+  worktreeList.innerHTML = "";
+
+  worktreeSessions.forEach(session => {
+    const item = document.createElement("div");
+    item.className = `worktree-item${session.id === activeWorktreeSessionId ? " active" : ""}${session.branch === "detached HEAD" ? " worktree-item-detached" : ""}`;
+
+    const branchDisplay = session.branch === "detached HEAD" ? "detached HEAD" : session.branch;
+    const tabCount = session.tabs.length;
+
+    item.innerHTML = `
+      <span class="worktree-branch">${branchDisplay}</span>
+      ${tabCount > 0 ? `<span class="worktree-tab-count">${tabCount}</span>` : ''}
+    `;
+
+    item.addEventListener("click", () => switchWorktreeSession(session.id));
+    worktreeList.appendChild(item);
+  });
+}
+
+async function switchWorktreeSession(sessionId: string) {
+  // Save current session's active tab
+  const currentSession = worktreeSessions.find(s => s.id === activeWorktreeSessionId);
+  if (currentSession) {
+    // activeTabId is saved in the session object
+  }
+
+  activeWorktreeSessionId = sessionId;
+  const session = getActiveWorktreeSession();
+
+  // Update currentPath to worktree path
+  currentPath = session.path;
+
+  // Update file browser
+  loadDirectory(currentPath);
+
+  // Render the tab bar and active content for this session
+  renderTabBar();
+  renderActiveContent();
+
+  // Update worktree list highlighting
+  renderWorktreeList();
+
+  updateStatusBar();
+}
+
+async function createWorktreeSession(branch: string, customPath?: string) {
+  try {
+    const repoRoot = await invoke<string>("git_find_repo_root", { startPath: currentPath });
+
+    let worktreePath = customPath;
+    if (!worktreePath) {
+      // Generate default path: <repo-parent>/<branch>
+      const parentDir = repoRoot.substring(0, repoRoot.lastIndexOf("/"));
+      worktreePath = `${parentDir}/${branch}`;
+    }
+
+    await invoke("git_worktree_add", {
+      repoPath: repoRoot,
+      worktreePath,
+      branch: branch || null,
+    });
+
+    const newBranch = await invoke<string>("git_get_current_branch", { worktreePath });
+
+    const newSession: WorktreeSession = {
+      id: `worktree-${crypto.randomUUID()}`,
+      path: worktreePath,
+      branch: newBranch,
+      isMain: false,
+      tabs: [],
+      activeTabId: "",
+      nextTabIndex: 1,
+      nextChatIndex: 1,
+      isInitialized: false,
+    };
+
+    worktreeSessions.push(newSession);
+
+    // Switch to new session
+    await switchWorktreeSession(newSession.id);
+
+    // Initialize first terminal tab
+    await createTab(false);
+
+  } catch (error) {
+    console.error("Failed to create worktree:", error);
+    alert(`Failed to create worktree: ${error}`);
+  }
+}
+
+async function initWorktreeSessions() {
+  await loadWorktrees();
+
+  // Initialize first tab for active session
+  const session = getActiveWorktreeSession();
+  if (session.tabs.length === 0) {
+    await createTab(false);
+  }
+}
 
 async function createTab(isNeovim: boolean = false) {
   const container = document.getElementById("terminal-container");
   const mainContent = document.getElementById("main-content");
+  const session = getActiveWorktreeSession();
 
   container?.classList.remove("collapsed");
   container?.classList.add("full-height");
   if (mainContent) mainContent.style.display = "none";
 
   const tabId = `tab-${crypto.randomUUID()}`;
-  const tabName = isNeovim ? `nvim ${nextTabIndex++}` : `Terminal ${nextTabIndex++}`;
+  const tabName = isNeovim ? `nvim ${session.nextTabIndex++}` : `Terminal ${session.nextTabIndex++}`;
 
   const newTab: TerminalTab = {
     id: tabId,
@@ -842,8 +1092,8 @@ async function createTab(isNeovim: boolean = false) {
     isInitialized: false,
   };
 
-  tabs.push(newTab);
-  activeTabId = tabId;
+  session.tabs.push(newTab);
+  session.activeTabId = tabId;
   renderTabBar();
 
   await initializeTab(newTab);
@@ -855,13 +1105,14 @@ async function createTab(isNeovim: boolean = false) {
 async function createNeovimTab(filePath?: string): Promise<TerminalTab> {
   const container = document.getElementById("terminal-container");
   const mainContent = document.getElementById("main-content");
+  const session = getActiveWorktreeSession();
 
   container?.classList.remove("collapsed");
   container?.classList.add("full-height");
   if (mainContent) mainContent.style.display = "none";
 
   const tabId = `tab-${crypto.randomUUID()}`;
-  const tabName = `nvim ${nextTabIndex++}`;
+  const tabName = `nvim ${session.nextTabIndex++}`;
 
   const newTab: TerminalTab = {
     id: tabId,
@@ -879,8 +1130,8 @@ async function createNeovimTab(filePath?: string): Promise<TerminalTab> {
     isInitialized: false,
   };
 
-  tabs.push(newTab);
-  activeTabId = tabId;
+  session.tabs.push(newTab);
+  session.activeTabId = tabId;
   renderTabBar();
 
   await initializeNeovimTab(newTab, filePath);
@@ -894,6 +1145,7 @@ async function createNeovimTab(filePath?: string): Promise<TerminalTab> {
 async function openInNeovim(filePath: string) {
   const normalizedPath = filePath.replace(/\\/g, "/");
   const activeTab = getActiveTab();
+  const session = getActiveWorktreeSession();
 
   if (activeTab && isTerminalTab(activeTab) && activeTab.isNeovim && activeTab.nvimSocketPath) {
     try {
@@ -908,8 +1160,8 @@ async function openInNeovim(filePath: string) {
     }
   }
 
-  const existingNeovimTab = tabs.find(
-    t => isTerminalTab(t) && t.isNeovim && t.nvimSocketPath && t.id !== activeTabId
+  const existingNeovimTab = session.tabs.find(
+    t => isTerminalTab(t) && t.isNeovim && t.nvimSocketPath && t.id !== session.activeTabId
   );
   if (existingNeovimTab && isTerminalTab(existingNeovimTab) && existingNeovimTab.nvimSocketPath) {
     await switchTab(existingNeovimTab.id);
@@ -930,8 +1182,9 @@ async function openInNeovim(filePath: string) {
 
 async function createChatTab() {
   console.log("Creating chat tab...");
+  const session = getActiveWorktreeSession();
   const tabId = `chat-${crypto.randomUUID()}`;
-  const tabName = `Chat ${nextChatIndex++}`;
+  const tabName = `Chat ${session.nextChatIndex++}`;
 
   const newTab: ChatTab = {
     id: tabId,
@@ -944,8 +1197,8 @@ async function createChatTab() {
     isInitialized: true,
   };
 
-  tabs.push(newTab);
-  activeTabId = tabId;
+  session.tabs.push(newTab);
+  session.activeTabId = tabId;
   renderTabBar();
 
   try {
@@ -959,11 +1212,11 @@ async function createChatTab() {
       body: JSON.stringify({}),
     });
     console.log("Session creation response status:", resp.status);
-    const session = await resp.json();
-    console.log("Session created:", JSON.stringify(session));
-    newTab.sessionId = session.id;
-    if (session.title) {
-      newTab.name = session.title;
+    const session_data = await resp.json();
+    console.log("Session created:", JSON.stringify(session_data));
+    newTab.sessionId = session_data.id;
+    if (session_data.title) {
+      newTab.name = session_data.title;
       renderTabBar();
     }
 
@@ -1069,17 +1322,55 @@ async function sendChatMessage(text: string) {
   }
 }
 
-async function initFirstTab() {
-  await createTab(false);
-}
-
 window.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadConfig();
     const cwd: string = await invoke("get_current_dir");
     currentPath = cwd;
-    loadDirectory(cwd);
-    await initFirstTab();
+
+    // Initialize worktree sessions
+    await initWorktreeSessions();
+
+    // Worktree event listeners
+    document.querySelector(".new-worktree-btn")?.addEventListener("click", () => {
+      if (!isGitRepo) return;
+      const modal = document.getElementById("worktree-modal");
+      if (modal) modal.style.display = "flex";
+    });
+
+    document.getElementById("refresh-worktrees-btn")?.addEventListener("click", () => {
+      loadWorktrees();
+    });
+
+    document.getElementById("worktree-modal-cancel")?.addEventListener("click", () => {
+      const modal = document.getElementById("worktree-modal");
+      if (modal) modal.style.display = "none";
+      // Clear inputs
+      const branchInput = document.getElementById("worktree-branch-input") as HTMLInputElement;
+      const pathInput = document.getElementById("worktree-path-input") as HTMLInputElement;
+      if (branchInput) branchInput.value = "";
+      if (pathInput) pathInput.value = "";
+    });
+
+    document.getElementById("worktree-modal-create")?.addEventListener("click", async () => {
+      const branchInput = document.getElementById("worktree-branch-input") as HTMLInputElement;
+      const pathInput = document.getElementById("worktree-path-input") as HTMLInputElement;
+      const branch = branchInput?.value.trim();
+      const path = pathInput?.value.trim();
+
+      if (!branch) {
+        alert("Please enter a branch name");
+        return;
+      }
+
+      await createWorktreeSession(branch, path || undefined);
+
+      // Hide modal and clear inputs
+      const modal = document.getElementById("worktree-modal");
+      if (modal) modal.style.display = "none";
+      if (branchInput) branchInput.value = "";
+      if (pathInput) pathInput.value = "";
+    });
 
     document.querySelector(".new-tab")?.addEventListener("click", () => createTab(false));
     document.querySelector(".new-chat")?.addEventListener("click", () => createChatTab());
