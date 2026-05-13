@@ -26,10 +26,20 @@ renderer.code = function({ text, lang }: { text: string, lang?: string }) {
 
 marked.use({ renderer });
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 const ICON_FOLDER = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.5 4.5A1 1 0 012.5 3.5h3.086a1 1 0 01.707.293L7.5 5h6a1 1 0 011 1v6a1 1 0 01-1 1h-11a1 1 0 01-1-1V4.5z" fill="#e0e0e0" fill-opacity="0.7"/></svg>`;
 
 const ICON_FILE = `<svg width="16" height="16" viewBox="0 1 14 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 1.5h7l3 3V14.5H2V1.5z" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/><path d="M9 1.5V4.5h3" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/></svg>`;
 const ICON_CHAT = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h12a1 1 0 011 1v7a1 1 0 01-1 1H6l-3 3v-3H2a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="#e0e0e0" stroke-opacity="0.7" stroke-width="1.2" fill="none"/></svg>`;
+const ICON_TERMINAL = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="#e0e0e0" stroke-opacity="0.5" stroke-width="1.2" fill="none"/><path d="M4 6l3 2.5L4 11" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 11h3" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" stroke-linecap="round"/></svg>`;
 
 interface FileEntry {
   name: string;
@@ -248,11 +258,20 @@ function loadSessions() {
         switchToSession(session);
       });
 
-      const deleteBtn = sessionEl.querySelector(".session-item-delete");
+      const deleteBtn = sessionEl.querySelector(".session-item-delete") as HTMLElement | null;
+      let confirmTimeout: number | null = null;
       deleteBtn?.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (confirm(`Delete session "${session.title}"?`)) {
+        if (deleteBtn.classList.contains("confirming")) {
+          if (confirmTimeout) clearTimeout(confirmTimeout);
           deleteSession(session.id);
+        } else {
+          deleteBtn.classList.add("confirming");
+          deleteBtn.textContent = "sure?";
+          confirmTimeout = window.setTimeout(() => {
+            deleteBtn.classList.remove("confirming");
+            deleteBtn.textContent = "×";
+          }, 3000);
         }
       });
 
@@ -452,7 +471,6 @@ function wireAppKeydownHandler() {
   document.addEventListener("keydown", async (e) => {
     const session = getActiveWorktreeSession();
     const currentIndex = session.tabs.findIndex(t => t.id === session.activeTabId);
-    const activeTab = getActiveTab();
 
     // Ctrl+Alt+Left: Switch to previous worktree session
     if (e.key === 'ArrowLeft' && e.ctrlKey && e.altKey) {
@@ -486,14 +504,9 @@ function wireAppKeydownHandler() {
       return;
     }
 
-    if (e.key === 'c' && e.ctrlKey) {
+    if (e.key === 'C' && e.ctrlKey && e.shiftKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-      if (activeTab && isTerminalTab(activeTab) && document.activeElement?.closest('#terminal')) {
-        return;
-      }
       await createChatTab();
       return;
     }
@@ -553,6 +566,7 @@ function renderFileList(files: FileEntry[]) {
     const parentDir = currentPath.substring(0, currentPath.lastIndexOf("/")) || "/";
     const parentEntry = document.createElement("div");
     parentEntry.className = "file-entry folder";
+    parentEntry.title = parentDir;
     parentEntry.innerHTML = `<span class="icon">${ICON_FOLDER}</span><span class="name">..</span>`;
     parentEntry.addEventListener("click", () => loadDirectory(parentDir));
     fileList.appendChild(parentEntry);
@@ -562,11 +576,13 @@ function renderFileList(files: FileEntry[]) {
     const entry = document.createElement("div");
     if (file.is_dir) {
       entry.className = "file-entry folder";
-      entry.innerHTML = `<span class="icon">${ICON_FOLDER}</span><span class="name">${file.name}</span>`;
+      entry.title = file.path;
+      entry.innerHTML = `<span class="icon">${ICON_FOLDER}</span><span class="name">${escapeHtml(file.name)}</span>`;
       entry.addEventListener("click", () => loadDirectory(file.path));
     } else {
       entry.className = "file-entry file";
-      entry.innerHTML = `<span class="icon">${ICON_FILE}</span><span class="name">${file.name}</span>`;
+      entry.title = file.path;
+      entry.innerHTML = `<span class="icon">${ICON_FILE}</span><span class="name">${escapeHtml(file.name)}</span>`;
       entry.addEventListener("click", () => openInNeovim(file.path));
     }
     fileList.appendChild(entry);
@@ -592,7 +608,7 @@ function renderTabBar() {
     const tabEl = document.createElement("div");
     tabEl.className = `tab ${tab.id === session.activeTabId ? "active" : ""}`;
     tabEl.dataset.tabId = tab.id;
-    const icon = isChatTab(tab) ? ICON_CHAT : '';
+    const icon = isChatTab(tab) ? ICON_CHAT : ICON_TERMINAL;
     tabEl.innerHTML = `
       <span class="tab-icon">${icon}</span>
       <span class="tab-name">${tab.name}</span>
@@ -1050,7 +1066,11 @@ async function createWorktreeSession(branch: string, customPath?: string) {
 
   } catch (error) {
     console.error("Failed to create worktree:", error);
-    alert(`Failed to create worktree: ${error}`);
+    const errorEl = document.getElementById("worktree-modal-error");
+    if (errorEl) {
+      errorEl.textContent = `Error: ${error}`;
+      errorEl.style.display = "block";
+    }
   }
 }
 
@@ -1251,13 +1271,12 @@ function renderChatMessages(tab: ChatTab) {
   }
 
   chatMessages.innerHTML = '';
-  tab.messages.forEach((msg, idx) => {
-    console.log(`Rendering message ${idx}:`, msg.role, msg.content.substring(0, 50));
+  tab.messages.forEach((msg) => {
     const msgEl = document.createElement("div");
     msgEl.className = `chat-message ${msg.role}`;
     const content = msg.role === 'assistant'
       ? marked.parse(msg.content, { breaks: true })
-      : msg.content;
+      : escapeHtml(msg.content);
     msgEl.innerHTML = `<div class="message-content">${content}</div>`;
     chatMessages.appendChild(msgEl);
   });
@@ -1265,9 +1284,12 @@ function renderChatMessages(tab: ChatTab) {
   if (tab.isStreaming) {
     const streamingEl = document.createElement("div");
     streamingEl.className = "chat-message assistant streaming";
-    streamingEl.innerHTML = '<div class="message-content"><span class="cursor-blink">▋</span></div>';
+    streamingEl.innerHTML = '<div class="message-content"><span class="thinking-label">Thinking</span><span class="cursor-blink">▋</span></div>';
     chatMessages.appendChild(streamingEl);
   }
+
+  const sendBtn = document.getElementById("chat-send") as HTMLButtonElement | null;
+  if (sendBtn) sendBtn.disabled = tab.isStreaming;
 
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -1345,31 +1367,36 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("worktree-modal-cancel")?.addEventListener("click", () => {
       const modal = document.getElementById("worktree-modal");
       if (modal) modal.style.display = "none";
-      // Clear inputs
       const branchInput = document.getElementById("worktree-branch-input") as HTMLInputElement;
       const pathInput = document.getElementById("worktree-path-input") as HTMLInputElement;
+      const errorEl = document.getElementById("worktree-modal-error");
       if (branchInput) branchInput.value = "";
       if (pathInput) pathInput.value = "";
+      if (errorEl) errorEl.style.display = "none";
     });
 
     document.getElementById("worktree-modal-create")?.addEventListener("click", async () => {
       const branchInput = document.getElementById("worktree-branch-input") as HTMLInputElement;
       const pathInput = document.getElementById("worktree-path-input") as HTMLInputElement;
+      const errorEl = document.getElementById("worktree-modal-error");
       const branch = branchInput?.value.trim();
       const path = pathInput?.value.trim();
 
       if (!branch) {
-        alert("Please enter a branch name");
+        if (errorEl) { errorEl.textContent = "Please enter a branch name."; errorEl.style.display = "block"; }
         return;
       }
 
+      if (errorEl) errorEl.style.display = "none";
       await createWorktreeSession(branch, path || undefined);
 
-      // Hide modal and clear inputs
-      const modal = document.getElementById("worktree-modal");
-      if (modal) modal.style.display = "none";
-      if (branchInput) branchInput.value = "";
-      if (pathInput) pathInput.value = "";
+      // Only hide modal if no error was shown
+      if (!errorEl || errorEl.style.display === "none") {
+        const modal = document.getElementById("worktree-modal");
+        if (modal) modal.style.display = "none";
+        if (branchInput) branchInput.value = "";
+        if (pathInput) pathInput.value = "";
+      }
     });
 
     document.querySelector(".new-tab")?.addEventListener("click", () => createTab(false));
@@ -1433,11 +1460,14 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     document.querySelectorAll(".collapse-btn").forEach(btn => {
       btn.addEventListener("click", () => {
-        const targetId = (btn as HTMLElement).dataset.target;
+        const btnEl = btn as HTMLElement;
+        const targetId = btnEl.dataset.target;
         if (!targetId) return;
         const sidebar = document.getElementById(targetId);
         if (sidebar) {
           sidebar.classList.toggle("collapsed");
+          const isCollapsed = sidebar.classList.contains("collapsed");
+          btnEl.setAttribute("aria-expanded", String(!isCollapsed));
           setTimeout(() => {
             const tab = getActiveTab();
             if (tab && isTerminalTab(tab) && tab.fitAddon) {
