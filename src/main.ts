@@ -511,7 +511,7 @@ function wireAppKeydownHandler() {
       return;
     }
 
-    if (e.key === 'Tab' && !e.shiftKey && !e.altKey) {
+    if (e.key === 'Tab' && e.altKey && !e.shiftKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       const nextIndex = currentIndex < session.tabs.length - 1 ? currentIndex + 1 : 0;
@@ -519,7 +519,7 @@ function wireAppKeydownHandler() {
       return;
     }
 
-    if (e.key === 'Tab' && e.shiftKey && !e.altKey) {
+    if (e.key === 'Tab' && e.altKey && e.shiftKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       const prevIndex = currentIndex > 0 ? currentIndex - 1 : session.tabs.length - 1;
@@ -527,14 +527,14 @@ function wireAppKeydownHandler() {
       return;
     }
 
-    if (e.key === 't' && e.ctrlKey) {
+    if (e.key === 't' && e.altKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       await createTab(false);
       return;
     }
 
-    if (e.key === 'w' && e.ctrlKey) {
+    if (e.key === 'w' && e.altKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       await closeTab(session.activeTabId);
@@ -611,7 +611,7 @@ function renderTabBar() {
     const icon = isChatTab(tab) ? ICON_CHAT : ICON_TERMINAL;
     tabEl.innerHTML = `
       <span class="tab-icon">${icon}</span>
-      <span class="tab-name">${tab.name}</span>
+      <span class="tab-name">${escapeHtml(tab.name)}</span>
       ${session.tabs.length > 1 ? '<span class="tab-close">×</span>' : ''}
     `;
     tabEl.addEventListener("click", (e) => {
