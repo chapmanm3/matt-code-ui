@@ -4,6 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import hljs from "highlight.js";
 import "highlight.js/styles/github-dark.css";
 
@@ -1275,7 +1276,7 @@ function renderChatMessages(tab: ChatTab) {
     const msgEl = document.createElement("div");
     msgEl.className = `chat-message ${msg.role}`;
     const content = msg.role === 'assistant'
-      ? marked.parse(msg.content, { breaks: true })
+      ? DOMPurify.sanitize(marked.parse(msg.content, { breaks: true }) as string)
       : escapeHtml(msg.content);
     msgEl.innerHTML = `<div class="message-content">${content}</div>`;
     chatMessages.appendChild(msgEl);
