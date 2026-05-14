@@ -10,34 +10,44 @@
 
   <body>
     <div id="app">
-      <aside id="sidebar" class="collapsible-sidebar">
-        <div class="sidebar-header">
-          <button class="collapse-btn" data-target="sidebar" title="Toggle Files">‹</button>
-          <span class="sidebar-title">Files</span>
-        </div>
-        <div id="current-path" class="current-path"></div>
-        <div id="file-list" class="file-list"></div>
-      </aside>
-      <aside id="worktree-sidebar" class="worktree-sidebar collapsible-sidebar">
-        <div class="sidebar-header">
-          <button class="collapse-btn" data-target="worktree-sidebar" title="Toggle Worktrees">‹</button>
-          <span class="sidebar-title">Worktrees</span>
-          <button id="new-worktree-btn" class="new-worktree-btn" title="New Worktree">+</button>
-          <button id="refresh-worktrees-btn" class="refresh-worktrees-btn" title="Refresh">↻</button>
-        </div>
-        <div id="worktree-list" class="worktree-list"></div>
-        <div id="worktree-empty" class="worktree-empty" style="display:none">
-          Not a git repository
-        </div>
-      </aside>
-      <aside id="session-sidebar" class="session-sidebar collapsible-sidebar">
-        <div class="sidebar-header">
-          <button class="collapse-btn" data-target="session-sidebar" title="Toggle Sessions">‹</button>
-          <span class="sidebar-title">Sessions</span>
-          <button id="new-session-btn" class="new-session-btn" title="New Session">+</button>
-        </div>
-        <div id="session-list" class="session-list"></div>
-      </aside>
+      <div id="sidebar-column">
+        <aside id="sidebar" class="collapsible-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Files</span>
+            <button class="collapse-btn" data-target="sidebar" title="Toggle Files" aria-expanded="true" aria-label="Toggle file browser">‹</button>
+          </div>
+          <div class="sidebar-content">
+            <div id="current-path" class="current-path"></div>
+            <div id="file-list" class="file-list"></div>
+          </div>
+        </aside>
+        <aside id="worktree-sidebar" class="worktree-sidebar collapsible-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Worktrees</span>
+            <div class="sidebar-header-actions">
+              <button id="new-worktree-btn" class="new-worktree-btn" title="New Worktree">+</button>
+              <button id="refresh-worktrees-btn" class="refresh-worktrees-btn" title="Refresh">↻</button>
+            </div>
+            <button class="collapse-btn" data-target="worktree-sidebar" title="Toggle Worktrees" aria-expanded="true" aria-label="Toggle worktree browser">‹</button>
+          </div>
+          <div class="sidebar-content">
+            <div id="worktree-list" class="worktree-list"></div>
+            <div id="worktree-empty" class="worktree-empty" style="display:none">
+              Not a git repository
+            </div>
+          </div>
+        </aside>
+        <aside id="session-sidebar" class="session-sidebar collapsible-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Sessions</span>
+            <button id="new-session-btn" class="new-session-btn" title="New Session">+</button>
+            <button class="collapse-btn" data-target="session-sidebar" title="Toggle Sessions" aria-expanded="true" aria-label="Toggle session browser">‹</button>
+          </div>
+          <div class="sidebar-content">
+            <div id="session-list" class="session-list"></div>
+          </div>
+        </aside>
+      </div>
       <div id="main-area">
         <main id="main-content" style="display:none">
           <div class="welcome">
@@ -48,8 +58,8 @@
         <div id="terminal-container" class="terminal-container full-height">
           <div class="terminal-header">
             <div class="tab-bar">
-              <button class="new-tab" title="New Terminal (Ctrl+T)">+</button>
-              <button class="new-chat" title="New Chat (Ctrl+C)">💬</button>
+              <button class="new-tab" title="New Terminal (Alt+T)">+</button>
+              <button class="new-chat" title="New Chat (Ctrl+Shift+C)">💬</button>
             </div>
           </div>
           <div id="terminal" class="terminal"></div>
@@ -62,18 +72,19 @@
             </div>
             <div id="chat-messages" class="chat-messages"></div>
             <div class="chat-input-container">
-              <textarea id="chat-input" class="chat-input" placeholder="Type a message..." rows="1"></textarea>
+              <textarea id="chat-input" class="chat-input" placeholder="Type a message… (Shift+Enter for newline)" rows="1"></textarea>
               <button id="chat-send" class="chat-send">Send</button>
             </div>
           </div>
           <div class="status-bar">
             <span id="status-info">Terminal</span>
             <span class="status-right">
-              <span class="status-item">Ctrl+Tab: Next Tab</span>
-              <span class="status-item">Ctrl+Shift+Tab: Prev Tab</span>
-              <span class="status-item">Ctrl+T: New Tab</span>
-              <span class="status-item">Ctrl+C: New Chat</span>
-              <span class="status-item">Ctrl+W: Close Tab</span>
+              <span class="status-item">Alt+Tab: Next Tab</span>
+              <span class="status-item">Alt+Shift+Tab: Prev Tab</span>
+              <span class="status-item">Alt+T: New Terminal</span>
+              <span class="status-item">Ctrl+Shift+C: New Chat</span>
+              <span class="status-item">Alt+W: Close Tab</span>
+              <span class="status-item">Ctrl+Alt+←/→: Switch Worktree</span>
             </span>
           </div>
         </div>
@@ -90,6 +101,7 @@
             <label>Path (optional): <input id="worktree-path-input" type="text" placeholder="Auto-generated if empty"></label>
           </div>
         </div>
+        <div id="worktree-modal-error" class="modal-error" style="display:none"></div>
         <div class="modal-footer">
           <button id="worktree-modal-cancel">Cancel</button>
           <button id="worktree-modal-create">Create</button>
