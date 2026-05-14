@@ -10,34 +10,44 @@
 
   <body>
     <div id="app">
-      <aside id="sidebar" class="collapsible-sidebar">
-        <div class="sidebar-header">
-          <button class="collapse-btn" data-target="sidebar" title="Toggle Files" aria-expanded="true" aria-label="Toggle file browser">‹</button>
-          <span class="sidebar-title">Files</span>
-        </div>
-        <div id="current-path" class="current-path"></div>
-        <div id="file-list" class="file-list"></div>
-      </aside>
-      <aside id="worktree-sidebar" class="worktree-sidebar collapsible-sidebar">
-        <div class="sidebar-header">
-          <button class="collapse-btn" data-target="worktree-sidebar" title="Toggle Worktrees" aria-expanded="true" aria-label="Toggle worktree browser">‹</button>
-          <span class="sidebar-title">Worktrees</span>
-          <button id="new-worktree-btn" class="new-worktree-btn" title="New Worktree">+</button>
-          <button id="refresh-worktrees-btn" class="refresh-worktrees-btn" title="Refresh">↻</button>
-        </div>
-        <div id="worktree-list" class="worktree-list"></div>
-        <div id="worktree-empty" class="worktree-empty" style="display:none">
-          Not a git repository
-        </div>
-      </aside>
-      <aside id="session-sidebar" class="session-sidebar collapsible-sidebar">
-        <div class="sidebar-header">
-          <button class="collapse-btn" data-target="session-sidebar" title="Toggle Sessions" aria-expanded="true" aria-label="Toggle session browser">‹</button>
-          <span class="sidebar-title">Sessions</span>
-          <button id="new-session-btn" class="new-session-btn" title="New Session">+</button>
-        </div>
-        <div id="session-list" class="session-list"></div>
-      </aside>
+      <div id="sidebar-column">
+        <aside id="sidebar" class="collapsible-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Files</span>
+            <button class="collapse-btn" data-target="sidebar" title="Toggle Files" aria-expanded="true" aria-label="Toggle file browser">‹</button>
+          </div>
+          <div class="sidebar-content">
+            <div id="current-path" class="current-path"></div>
+            <div id="file-list" class="file-list"></div>
+          </div>
+        </aside>
+        <aside id="worktree-sidebar" class="worktree-sidebar collapsible-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Worktrees</span>
+            <div class="sidebar-header-actions">
+              <button id="new-worktree-btn" class="new-worktree-btn" title="New Worktree">+</button>
+              <button id="refresh-worktrees-btn" class="refresh-worktrees-btn" title="Refresh">↻</button>
+            </div>
+            <button class="collapse-btn" data-target="worktree-sidebar" title="Toggle Worktrees" aria-expanded="true" aria-label="Toggle worktree browser">‹</button>
+          </div>
+          <div class="sidebar-content">
+            <div id="worktree-list" class="worktree-list"></div>
+            <div id="worktree-empty" class="worktree-empty" style="display:none">
+              Not a git repository
+            </div>
+          </div>
+        </aside>
+        <aside id="session-sidebar" class="session-sidebar collapsible-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Sessions</span>
+            <button id="new-session-btn" class="new-session-btn" title="New Session">+</button>
+            <button class="collapse-btn" data-target="session-sidebar" title="Toggle Sessions" aria-expanded="true" aria-label="Toggle session browser">‹</button>
+          </div>
+          <div class="sidebar-content">
+            <div id="session-list" class="session-list"></div>
+          </div>
+        </aside>
+      </div>
       <div id="main-area">
         <main id="main-content" style="display:none">
           <div class="welcome">
@@ -62,7 +72,7 @@
             </div>
             <div id="chat-messages" class="chat-messages"></div>
             <div class="chat-input-container">
-              <textarea id="chat-input" class="chat-input" placeholder="Type a message..." rows="1"></textarea>
+              <textarea id="chat-input" class="chat-input" placeholder="Type a message… (Shift+Enter for newline)" rows="1"></textarea>
               <button id="chat-send" class="chat-send">Send</button>
             </div>
           </div>
