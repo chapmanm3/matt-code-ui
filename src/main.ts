@@ -251,7 +251,7 @@ function loadSessions() {
       sessionEl.innerHTML = `
         <div class="session-item-title">${session.title || 'Untitled'}</div>
         <div class="session-item-time">${timeStr}</div>
-        <span class="session-item-delete" data-session-id="${session.id}">×</span>
+        <span class="session-item-delete" data-session-id="${session.id}" tabindex="0" role="button" aria-label="Delete session">×</span>
       `;
 
       sessionEl.addEventListener("click", (e) => {
@@ -260,21 +260,30 @@ function loadSessions() {
       });
 
       const deleteBtn = sessionEl.querySelector(".session-item-delete") as HTMLElement | null;
-      let confirmTimeout: number | null = null;
-      deleteBtn?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (deleteBtn.classList.contains("confirming")) {
-          if (confirmTimeout) clearTimeout(confirmTimeout);
-          deleteSession(session.id);
-        } else {
-          deleteBtn.classList.add("confirming");
-          deleteBtn.textContent = "sure?";
-          confirmTimeout = window.setTimeout(() => {
-            deleteBtn.classList.remove("confirming");
-            deleteBtn.textContent = "×";
-          }, 3000);
-        }
-      });
+      if (deleteBtn) {
+        let confirmTimeout: number | null = null;
+        const activateDelete = (e: Event) => {
+          e.stopPropagation();
+          if (deleteBtn.classList.contains("confirming")) {
+            if (confirmTimeout) clearTimeout(confirmTimeout);
+            deleteSession(session.id);
+          } else {
+            deleteBtn.classList.add("confirming");
+            deleteBtn.textContent = "sure?";
+            confirmTimeout = window.setTimeout(() => {
+              deleteBtn.classList.remove("confirming");
+              deleteBtn.textContent = "×";
+            }, 3000);
+          }
+        };
+        deleteBtn.addEventListener("click", activateDelete);
+        deleteBtn.addEventListener("keydown", (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            activateDelete(e);
+          }
+        });
+      }
 
       sessionList.appendChild(sessionEl);
     });
