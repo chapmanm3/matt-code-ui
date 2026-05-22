@@ -36,11 +36,11 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#039;');
 }
 
-const ICON_FOLDER = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.5 4.5A1 1 0 012.5 3.5h3.086a1 1 0 01.707.293L7.5 5h6a1 1 0 011 1v6a1 1 0 01-1 1h-11a1 1 0 01-1-1V4.5z" fill="#e0e0e0" fill-opacity="0.7"/></svg>`;
-
-const ICON_FILE = `<svg width="16" height="16" viewBox="0 1 14 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 1.5h7l3 3V14.5H2V1.5z" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/><path d="M9 1.5V4.5h3" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" fill="none"/></svg>`;
-const ICON_CHAT = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h12a1 1 0 011 1v7a1 1 0 01-1 1H6l-3 3v-3H2a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="#e0e0e0" stroke-opacity="0.7" stroke-width="1.2" fill="none"/></svg>`;
-const ICON_TERMINAL = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="#e0e0e0" stroke-opacity="0.5" stroke-width="1.2" fill="none"/><path d="M4 6l3 2.5L4 11" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 11h3" stroke="#e0e0e0" stroke-opacity="0.6" stroke-width="1.2" stroke-linecap="round"/></svg>`;
+const ICON_FOLDER = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 4.5A1 1 0 012.5 3.5h3.086a1 1 0 01.707.293L7.5 5h6a1 1 0 011 1v6a1 1 0 01-1 1h-11a1 1 0 01-1-1V4.5z" fill="currentColor" fill-opacity="0.65"/></svg>`;
+const ICON_FILE = `<svg width="11" height="13" viewBox="0 0 14 16" fill="none" aria-hidden="true"><path d="M2 1.5h7l3 3V14.5H2V1.5z" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.2"/><path d="M9 1.5V4.5h3" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.2"/></svg>`;
+const ICON_CHAT = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1.5 3a1.5 1.5 0 011.5-1.5h6A1.5 1.5 0 0110.5 3v4A1.5 1.5 0 019 8.5H5l-2.5 2V8.5H3A1.5 1.5 0 011.5 7V3z" stroke="currentColor" stroke-width="1.1"/></svg>`;
+const ICON_TERMINAL = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 3.5l2 2-2 2M5.5 8H9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_BRANCH = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="3" cy="2.5" r="1.3" stroke="currentColor" stroke-width="1.1"/><circle cx="3" cy="9.5" r="1.3" stroke="currentColor" stroke-width="1.1"/><circle cx="9" cy="5.5" r="1.3" stroke="currentColor" stroke-width="1.1"/><path d="M3 4v4M3 7c0-2 2-3 4-3" stroke="currentColor" stroke-width="1.1"/></svg>`;
 
 interface FileEntry {
   name: string;
@@ -246,12 +246,22 @@ function loadSessions() {
       }
 
       const date = new Date(session.time.updated);
-      const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const ageMs = Date.now() - date.getTime();
+      const ageMin = Math.floor(ageMs / 60000);
+      const timeStr = ageMin < 60
+        ? `${ageMin}m`
+        : ageMin < 1440
+        ? `${Math.floor(ageMin / 60)}h`
+        : ageMin < 2880
+        ? 'yesterday'
+        : `${Math.floor(ageMin / 1440)}d`;
+
+      const pulse = activeTab ? '<span class="session-pulse"></span>' : '';
 
       sessionEl.innerHTML = `
-        <div class="session-item-title">${session.title || 'Untitled'}</div>
-        <div class="session-item-time">${timeStr}</div>
         <span class="session-item-delete" data-session-id="${session.id}" tabindex="0" role="button" aria-label="Delete session">×</span>
+        <div class="session-item-title">${pulse}${escapeHtml(session.title || 'Untitled')}</div>
+        <div class="session-item-time">${timeStr}</div>
       `;
 
       sessionEl.addEventListener("click", (e) => {
@@ -576,6 +586,7 @@ function renderFileList(files: FileEntry[]) {
     const parentDir = currentPath.substring(0, currentPath.lastIndexOf("/")) || "/";
     const parentEntry = document.createElement("div");
     parentEntry.className = "file-entry folder";
+    parentEntry.style.opacity = "0.5";
     parentEntry.title = parentDir;
     parentEntry.innerHTML = `<span class="icon">${ICON_FOLDER}</span><span class="name">..</span>`;
     parentEntry.addEventListener("click", () => loadDirectory(parentDir));
@@ -593,7 +604,11 @@ function renderFileList(files: FileEntry[]) {
       entry.className = "file-entry file";
       entry.title = file.path;
       entry.innerHTML = `<span class="icon">${ICON_FILE}</span><span class="name">${escapeHtml(file.name)}</span>`;
-      entry.addEventListener("click", () => openInNeovim(file.path));
+      entry.addEventListener("click", () => {
+        fileList.querySelectorAll(".file-entry.active").forEach(el => el.classList.remove("active"));
+        entry.classList.add("active");
+        openInNeovim(file.path);
+      });
     }
     fileList.appendChild(entry);
   }
@@ -602,37 +617,68 @@ function renderFileList(files: FileEntry[]) {
 function updatePathDisplay(path: string) {
   const pathDisplay = document.getElementById("current-path");
   if (pathDisplay) {
-    pathDisplay.textContent = path;
+    // Show just the short path (tilde-contracted)
+    const home = path.startsWith("/home/") ? path.replace(/^\/home\/[^/]+/, "~") : path;
+    pathDisplay.textContent = home;
+    pathDisplay.title = path;
   }
 }
 
 function renderTabBar() {
-  const tabBar = document.querySelector(".tab-bar");
+  const tabBar = document.getElementById("tab-bar");
   if (!tabBar) return;
 
   const existingTabs = tabBar.querySelectorAll(".tab");
   existingTabs.forEach(t => t.remove());
 
   const session = getActiveWorktreeSession();
+  const newTabBtn = tabBar.querySelector(".new-tab");
+
   session.tabs.forEach(tab => {
+    const isActive = tab.id === session.activeTabId;
+    const isChat = isChatTab(tab);
     const tabEl = document.createElement("div");
-    tabEl.className = `tab ${tab.id === session.activeTabId ? "active" : ""}`;
+    tabEl.className = `tab${isActive ? " active" : ""}${isChat ? " chat-tab" : ""}`;
     tabEl.dataset.tabId = tab.id;
-    const icon = isChatTab(tab) ? ICON_CHAT : ICON_TERMINAL;
+    tabEl.setAttribute("role", "tab");
+    tabEl.setAttribute("aria-selected", String(isActive));
+
+    const icon = isChat ? ICON_CHAT : ICON_TERMINAL;
+    const closeBtn = session.tabs.length > 1
+      ? `<span class="tab-close" aria-label="Close tab">
+           <svg width="9" height="9" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+         </span>`
+      : '';
+
     tabEl.innerHTML = `
       <span class="tab-icon">${icon}</span>
       <span class="tab-name">${escapeHtml(tab.name)}</span>
-      ${session.tabs.length > 1 ? '<span class="tab-close">×</span>' : ''}
+      ${closeBtn}
     `;
+
     tabEl.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).classList.contains("tab-close")) {
+      if ((e.target as Element).closest(".tab-close")) {
         closeTab(tab.id);
       } else {
         switchTab(tab.id);
       }
     });
-    tabBar.insertBefore(tabEl, tabBar.querySelector(".new-tab"));
+
+    tabBar.insertBefore(tabEl, newTabBtn);
   });
+
+  // per-tab meta in the right slot
+  const meta = document.getElementById("tab-bar-meta");
+  if (meta) {
+    const activeTab = session.tabs.find(t => t.id === session.activeTabId);
+    if (activeTab && isChatTab(activeTab) && activeTab.sessionId) {
+      meta.textContent = "chat session";
+    } else if (activeTab && isTerminalTab(activeTab) && activeTab.sessionId) {
+      meta.textContent = `zsh · pid ${activeTab.sessionId}`;
+    } else {
+      meta.textContent = "";
+    }
+  }
 }
 
 async function switchTab(tabId: string) {
@@ -654,11 +700,12 @@ function makeTerminal(): { terminal: Terminal; fitAddon: FitAddon } {
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
-    fontFamily: "Consolas, Monaco, 'Courier New', monospace",
+    fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
     theme: {
       background: "#090b10",
       foreground: "#e0e0e0",
       cursor: "#e0e0e0",
+      selectionBackground: "#ffffff22",
     },
     convertEol: true,
   });
@@ -893,18 +940,34 @@ function renderActiveContent() {
 function updateStatusBar() {
   const tab = getActiveTab();
   const statusInfo = document.getElementById("status-info");
+  const statusBranchName = document.getElementById("status-branch-name");
+  const statusGit = document.getElementById("status-git");
+  const session = worktreeSessions.find(s => s.id === activeWorktreeSessionId);
+
+  // Branch
+  if (statusBranchName && session) {
+    statusBranchName.textContent = session.branch || "—";
+  }
+
+  // Git status placeholder (real data would come from backend)
+  if (statusGit) {
+    statusGit.className = "";
+    statusGit.innerHTML = isGitRepo
+      ? `<span class="status-clean">● clean</span>`
+      : '';
+  }
+
   if (!statusInfo) return;
 
   if (tab && isChatTab(tab)) {
-    let modelText = "";
-    if (currentModel) {
-      modelText = ` [${currentModel.providerID}/${currentModel.modelID}]`;
-    }
-    statusInfo.textContent = `AI Chat${modelText} - Type and press Enter to send`;
+    const sessionCount = session?.tabs.filter(t => isChatTab(t)).length ?? 0;
+    const termCount = session?.tabs.filter(t => isTerminalTab(t)).length ?? 0;
+    statusInfo.textContent = `${termCount} terminal${termCount !== 1 ? 's' : ''} · ${sessionCount} chat`;
   } else if (tab && isTerminalTab(tab) && tab.isNeovim) {
-    statusInfo.textContent = "nvim — click files to open | :tabn/:tabp navigate | :q close";
+    statusInfo.textContent = "nvim";
   } else {
-    statusInfo.textContent = "Terminal - Ctrl+C interrupt, Ctrl+D exit";
+    const termCount = session?.tabs.filter(t => isTerminalTab(t)).length ?? 0;
+    statusInfo.textContent = `${termCount} terminal${termCount !== 1 ? 's' : ''}`;
   }
 }
 
@@ -993,14 +1056,16 @@ function renderWorktreeList() {
   worktreeList.innerHTML = "";
 
   worktreeSessions.forEach(session => {
+    const isActive = session.id === activeWorktreeSessionId;
     const item = document.createElement("div");
-    item.className = `worktree-item${session.id === activeWorktreeSessionId ? " active" : ""}${session.branch === "detached HEAD" ? " worktree-item-detached" : ""}`;
+    item.className = `worktree-item${isActive ? " active" : ""}${session.branch === "detached HEAD" ? " worktree-item-detached" : ""}`;
 
     const branchDisplay = session.branch === "detached HEAD" ? "detached HEAD" : session.branch;
     const tabCount = session.tabs.length;
 
     item.innerHTML = `
-      <span class="worktree-branch">${branchDisplay}</span>
+      <span class="worktree-branch-icon">${ICON_BRANCH}</span>
+      <span class="worktree-branch">${escapeHtml(branchDisplay)}</span>
       ${tabCount > 0 ? `<span class="worktree-tab-count">${tabCount}</span>` : ''}
     `;
 
@@ -1273,30 +1338,70 @@ async function createChatTab() {
 }
 
 function renderChatMessages(tab: ChatTab) {
-  console.log("renderChatMessages called, messages count:", tab.messages.length);
   const chatMessages = document.getElementById("chat-messages");
-  if (!chatMessages) {
-    console.error("chat-messages element not found");
-    return;
-  }
+  if (!chatMessages) return;
 
   chatMessages.innerHTML = '';
+
   tab.messages.forEach((msg) => {
-    const msgEl = document.createElement("div");
-    msgEl.className = `chat-message ${msg.role}`;
+    const isUser = msg.role === 'user';
+    const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const avatarClass = isUser ? 'user' : 'assistant';
+    const avatarLabel = isUser ? 'M' : `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M6 1.5l1.2 3.3L10.5 6 7.2 7.2 6 10.5 4.8 7.2 1.5 6l3.3-1.2L6 1.5z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></svg>`;
+    const roleName = isUser ? 'matt' : 'claude';
+
     const content = msg.role === 'assistant'
       ? DOMPurify.sanitize(marked.parse(msg.content, { breaks: true }) as string)
-      : escapeHtml(msg.content);
-    msgEl.innerHTML = `<div class="message-content">${content}</div>`;
-    chatMessages.appendChild(msgEl);
+      : `<p>${escapeHtml(msg.content)}</p>`;
+
+    const turnEl = document.createElement("div");
+    turnEl.className = "chat-turn";
+    turnEl.innerHTML = `
+      <div class="chat-turn-avatar ${avatarClass}">${avatarLabel}</div>
+      <div class="chat-turn-body">
+        <div class="chat-turn-meta">${roleName} · ${time}</div>
+        <div class="chat-turn-content">${content}</div>
+        <div class="chat-turn-actions">
+          <button class="chat-action-btn" title="Copy">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="3" y="3" width="6.5" height="6.5" rx="1" stroke="currentColor" stroke-width="1.1"/><path d="M3 3V2a1 1 0 011-1h4a1 1 0 011 1v1" stroke="currentColor" stroke-width="1.1"/></svg>
+            copy
+          </button>
+          ${!isUser ? `<button class="chat-action-btn" title="Retry">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2.5 6a3.5 3.5 0 016-2.5M9.5 6a3.5 3.5 0 01-6 2.5M2.5 2v2.5h2.5M9.5 10V7.5H7" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+            retry
+          </button>` : ''}
+        </div>
+      </div>
+    `;
+    chatMessages.appendChild(turnEl);
   });
 
   if (tab.isStreaming) {
-    const streamingEl = document.createElement("div");
-    streamingEl.className = "chat-message assistant streaming";
-    streamingEl.innerHTML = '<div class="message-content"><span class="thinking-label">Thinking</span><span class="cursor-blink">▋</span></div>';
-    chatMessages.appendChild(streamingEl);
+    const streamEl = document.createElement("div");
+    streamEl.className = "chat-turn";
+    streamEl.innerHTML = `
+      <div class="chat-turn-avatar assistant">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M6 1.5l1.2 3.3L10.5 6 7.2 7.2 6 10.5 4.8 7.2 1.5 6l3.3-1.2L6 1.5z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="chat-turn-body">
+        <div class="chat-turn-meta">
+          claude
+          <span class="chat-streaming-badge">
+            <span class="chat-streaming-dot"></span>
+            streaming
+          </span>
+        </div>
+        <div class="chat-turn-content">
+          <span class="thinking-label">Thinking</span><span class="cursor-blink"></span>
+        </div>
+      </div>
+    `;
+    chatMessages.appendChild(streamEl);
   }
+
+  // Update chat header title with session name
+  const headerTitle = document.getElementById("chat-header-title");
+  if (headerTitle && tab.name) headerTitle.textContent = tab.name;
 
   const sendBtn = document.getElementById("chat-send") as HTMLButtonElement | null;
   if (sendBtn) sendBtn.disabled = tab.isStreaming;
@@ -1364,7 +1469,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     await initWorktreeSessions();
 
     // Worktree event listeners
-    document.querySelector(".new-worktree-btn")?.addEventListener("click", () => {
+    document.getElementById("new-worktree-btn")?.addEventListener("click", () => {
       if (!isGitRepo) return;
       const modal = document.getElementById("worktree-modal");
       if (modal) modal.style.display = "flex";
@@ -1374,7 +1479,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       loadWorktrees();
     });
 
-    document.getElementById("worktree-modal-cancel")?.addEventListener("click", () => {
+    const closeModal = () => {
       const modal = document.getElementById("worktree-modal");
       if (modal) modal.style.display = "none";
       const branchInput = document.getElementById("worktree-branch-input") as HTMLInputElement;
@@ -1383,7 +1488,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (branchInput) branchInput.value = "";
       if (pathInput) pathInput.value = "";
       if (errorEl) errorEl.style.display = "none";
-    });
+    };
+
+    document.getElementById("worktree-modal-cancel")?.addEventListener("click", closeModal);
+    document.getElementById("worktree-modal-close")?.addEventListener("click", closeModal);
 
     document.getElementById("worktree-modal-create")?.addEventListener("click", async () => {
       const branchInput = document.getElementById("worktree-branch-input") as HTMLInputElement;
@@ -1408,6 +1516,18 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (pathInput) pathInput.value = "";
       }
     });
+
+    // Live-update modal footer command preview
+    const branchInputEl = document.getElementById("worktree-branch-input") as HTMLInputElement | null;
+    const footerCmd = document.getElementById("modal-footer-cmd");
+    if (branchInputEl && footerCmd) {
+      branchInputEl.addEventListener("input", () => {
+        const val = branchInputEl.value.trim();
+        footerCmd.textContent = val
+          ? `git worktree add -b feat/${val} …`
+          : 'git worktree add -b feat/…';
+      });
+    }
 
     document.querySelector(".new-tab")?.addEventListener("click", () => createTab(false));
     document.querySelector(".new-chat")?.addEventListener("click", () => createChatTab());
