@@ -399,6 +399,57 @@ fn spawn_terminal(
     Ok(session_id)
 }
 
+#[tauri::command]
+fn spawn_terminal_cmd(
+    app: AppHandle,
+    state: State<'_, TerminalStateHandle>,
+    cmd: String,
+    cwd: Option<String>,
+    rows: u16,
+    cols: u16,
+) -> Result<String, String> {
+    let pty_system = native_pty_system();
+
+    let pair = pty_system
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut builder = CommandBuilder::new(&cmd);
+    if let Some(dir) = cwd {
+        builder.cwd(dir);
+    }
+
+    let child = pair.slave.spawn_command(builder).map_err(|e| e.to_string())?;
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+
+    let session_id = {
+        let mut state = state.lock();
+        let id = state.next_id;
+        state.next_id += 1;
+        let session_id = format!("term-{}", id);
+        state.sessions.insert(
+            session_id.clone(),
+            TerminalSession {
+                master: pair.master,
+                writer: Arc::new(Mutex::new(Some(writer))),
+                socket_path: None,
+            },
+        );
+        session_id
+    };
+
+    let session_id_clone = session_id.clone();
+    thread::spawn(move || reader_thread(reader, app, session_id_clone, child));
+
+    Ok(session_id)
+}
+
 #[cfg(unix)]
 #[tauri::command]
 fn spawn_neovim(
@@ -743,6 +794,7 @@ pub fn run() {
             read_directory,
             read_file,
             spawn_terminal,
+            spawn_terminal_cmd,
             spawn_neovim,
             nvim_open_file,
             write_to_terminal,

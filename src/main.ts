@@ -531,6 +531,13 @@ function wireAppKeydownHandler() {
       return;
     }
 
+    if (e.key === 'K' && e.ctrlKey && e.shiftKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      await createClaudeTab();
+      return;
+    }
+
     if (e.key === 'Tab' && e.altKey && !e.shiftKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -1337,6 +1344,90 @@ async function createChatTab() {
   updateStatusBar();
 }
 
+async function createClaudeTab() {
+  const container = document.getElementById("terminal-container");
+  const mainContent = document.getElementById("main-content");
+  const session = getActiveWorktreeSession();
+
+  container?.classList.remove("collapsed");
+  container?.classList.add("full-height");
+  if (mainContent) mainContent.style.display = "none";
+
+  const tabId = `tab-${crypto.randomUUID()}`;
+  const tabName = `Claude ${session.nextTabIndex++}`;
+
+  const newTab: TerminalTab = {
+    id: tabId,
+    sessionId: null,
+    name: tabName,
+    isNeovim: false,
+    nvimSocketPath: null,
+    terminal: null,
+    fitAddon: null,
+    unlistenData: null,
+    unlistenExit: null,
+    rowCount: 24,
+    colCount: 80,
+    isActive: false,
+    isInitialized: false,
+  };
+
+  session.tabs.push(newTab);
+  session.activeTabId = tabId;
+  renderTabBar();
+
+  const terminalEl = document.getElementById("terminal");
+  if (!terminalEl) return;
+
+  terminalEl.innerHTML = "";
+  const { terminal, fitAddon } = makeTerminal();
+  terminal.open(terminalEl);
+  fitAddon.fit();
+
+  newTab.terminal = terminal;
+  newTab.fitAddon = fitAddon;
+  newTab.rowCount = terminal.rows;
+  newTab.colCount = terminal.cols;
+  newTab.isInitialized = true;
+
+  try {
+    const sessionId = await invoke<string>("spawn_terminal_cmd", {
+      cmd: "claude",
+      cwd: currentPath || null,
+      rows: newTab.rowCount,
+      cols: newTab.colCount,
+    });
+
+    newTab.sessionId = sessionId;
+
+    const unlistenData = await listen(`terminal-data-${sessionId}`, (event) => {
+      terminal.write(event.payload as string);
+    });
+
+    const unlistenExit = await listen(`terminal-exited-${sessionId}`, () => {
+      terminal.writeln("\r\n[Claude exited]");
+      const tabStillExists = session.tabs.some(t => t.id === newTab.id);
+      if (tabStillExists && session.tabs.length > 1) {
+        setTimeout(() => {
+          if (session.tabs.some(t => t.id === newTab.id)) {
+            closeTab(newTab.id);
+          }
+        }, 500);
+      }
+    });
+
+    newTab.unlistenData = unlistenData;
+    newTab.unlistenExit = unlistenExit;
+
+    wireTerminalInput(newTab, terminal);
+  } catch (error) {
+    terminal.writeln(`\x1b[31mError starting claude: ${error}\x1b[0m`);
+  }
+
+  renderActiveContent();
+  updateStatusBar();
+}
+
 function renderChatMessages(tab: ChatTab) {
   const chatMessages = document.getElementById("chat-messages");
   if (!chatMessages) return;
@@ -1531,6 +1622,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     document.querySelector(".new-tab")?.addEventListener("click", () => createTab(false));
     document.querySelector(".new-chat")?.addEventListener("click", () => createChatTab());
+    document.querySelector(".new-claude")?.addEventListener("click", () => createClaudeTab());
 
     const terminalEl = document.getElementById("terminal");
     if (terminalEl) {
