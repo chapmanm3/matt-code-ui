@@ -62,8 +62,16 @@ interface Keybinds {
   close_terminal: string;
 }
 
+interface Project {
+  id: string;
+  name: string;
+  path: string;
+}
+
 interface Config {
   keybinds: Keybinds;
+  projects: Array<{ id: string; name: string; path: string }>;
+  active_project_id: string | null;
 }
 
 interface TerminalTab {
@@ -134,6 +142,7 @@ interface WorktreeEntry {
 
 interface WorktreeSession {
   id: string;
+  projectId: string;
   path: string;
   branch: string;
   isMain: boolean;
@@ -152,6 +161,9 @@ let opencodeReadyResolver: (() => void) | null = null;
 let providers: Provider[] = [];
 let defaultModels: { [key: string]: string } = {};
 let currentModel: { providerID: string; modelID: string } | null = null;
+
+let projects: Project[] = [];
+let activeProjectId: string | null = null;
 
 let worktreeSessions: WorktreeSession[] = [];
 let activeWorktreeSessionId: string | null = null;
@@ -478,12 +490,156 @@ function isTerminalTab(tab: Tab): tab is TerminalTab {
   return !isChatTab(tab);
 }
 
+let loadedConfig: Config | null = null;
+
 async function loadConfig() {
   try {
     const result = await invoke<Config>("read_config");
+    loadedConfig = result;
     console.log("Config loaded:", result);
   } catch (error) {
     console.error("Error loading config:", error);
+  }
+}
+
+async function saveProjectsToConfig() {
+  const config = {
+    keybinds: loadedConfig?.keybinds ?? {},
+    projects: projects.map(p => ({ id: p.id, name: p.name, path: p.path })),
+    active_project_id: activeProjectId,
+  };
+  try {
+    await invoke("write_config", { config: JSON.stringify(config) });
+  } catch (error) {
+    console.error("Error saving config:", error);
+  }
+}
+
+async function initProjects() {
+  const config = loadedConfig;
+
+  if (config?.projects && config.projects.length > 0) {
+    projects = config.projects.map(p => ({ id: p.id, name: p.name, path: p.path }));
+    activeProjectId = config.active_project_id ?? projects[0].id;
+    if (!projects.find(p => p.id === activeProjectId)) {
+      activeProjectId = projects[0].id;
+    }
+  } else {
+    // First launch: auto-create a project from cwd
+    let projectPath = currentPath;
+    let projectName = currentPath.split("/").pop() || "project";
+    try {
+      projectPath = await invoke<string>("git_find_repo_root", { startPath: currentPath });
+      projectName = projectPath.split("/").pop() || projectName;
+    } catch { /* not a git repo, use cwd */ }
+
+    const firstProject: Project = { id: crypto.randomUUID(), name: projectName, path: projectPath };
+    projects = [firstProject];
+    activeProjectId = firstProject.id;
+    await saveProjectsToConfig();
+  }
+
+  const active = projects.find(p => p.id === activeProjectId)!;
+  currentPath = active.path;
+}
+
+function renderProjectList() {
+  const projectList = document.getElementById("project-list");
+  if (!projectList) return;
+
+  projectList.innerHTML = "";
+  projects.forEach(project => {
+    const isActive = project.id === activeProjectId;
+    const item = document.createElement("div");
+    item.className = `project-item${isActive ? " active" : ""}`;
+    const deleteBtn = projects.length > 1
+      ? `<button class="project-delete-btn" data-project-id="${project.id}" title="Remove project" aria-label="Remove project">` +
+        `<svg width="9" height="9" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` +
+        `</button>`
+      : '';
+    item.innerHTML = `
+      <span class="project-item-dot">${isActive ? '●' : '○'}</span>
+      <span class="project-item-name">${escapeHtml(project.name)}</span>
+      ${deleteBtn}
+    `;
+    item.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest(".project-delete-btn")) return;
+      switchProject(project.id);
+    });
+    projectList.appendChild(item);
+  });
+}
+
+async function switchProject(id: string) {
+  if (id === activeProjectId) return;
+
+  activeProjectId = id;
+  const project = projects.find(p => p.id === id)!;
+  currentPath = project.path;
+
+  await saveProjectsToConfig();
+  await loadDirectory(currentPath);
+  await loadWorktrees(id);
+
+  renderProjectList();
+  renderWorktreeList();
+  renderTabBar();
+  renderActiveContent();
+  updateStatusBar();
+
+  // Ensure the active worktree has at least one tab
+  try {
+    const session = getActiveWorktreeSession();
+    if (session.tabs.length === 0) {
+      await createTab(false);
+    }
+  } catch { /* no active session */ }
+}
+
+async function createProject(name: string, path: string) {
+  const trimmedName = name.trim();
+  const trimmedPath = path.trim();
+  if (!trimmedName || !trimmedPath) return;
+
+  const newProject: Project = { id: crypto.randomUUID(), name: trimmedName, path: trimmedPath };
+  projects.push(newProject);
+  await saveProjectsToConfig();
+  await switchProject(newProject.id);
+}
+
+async function deleteProject(id: string) {
+  const index = projects.findIndex(p => p.id === id);
+  if (index === -1) return;
+
+  projects.splice(index, 1);
+
+  // Clean up worktree sessions for this project
+  worktreeSessions = worktreeSessions.filter(s => s.projectId !== id);
+
+  if (id === activeProjectId) {
+    activeProjectId = projects.length > 0 ? projects[0].id : null;
+    if (activeProjectId) {
+      const project = projects.find(p => p.id === activeProjectId)!;
+      currentPath = project.path;
+      await loadDirectory(currentPath);
+      await loadWorktrees(activeProjectId);
+    }
+  }
+
+  await saveProjectsToConfig();
+  renderProjectList();
+  renderWorktreeList();
+
+  if (!activeProjectId) {
+    // Deleted the last project — show empty state
+    const tabsEl = document.getElementById("tabs");
+    const terminalEl = document.getElementById("terminal");
+    const mainContent = document.getElementById("main-content");
+    if (tabsEl) tabsEl.innerHTML = "";
+    if (terminalEl) terminalEl.innerHTML = "";
+    if (mainContent) mainContent.style.display = "block";
+    renderActiveContent();
+    updateStatusBar();
   }
 }
 
@@ -492,25 +648,27 @@ function wireAppKeydownHandler() {
     const session = getActiveWorktreeSession();
     const currentIndex = session.tabs.findIndex(t => t.id === session.activeTabId);
 
-    // Ctrl+Alt+Left: Switch to previous worktree session
+    // Ctrl+Alt+Left: Switch to previous worktree session (within current project)
     if (e.key === 'ArrowLeft' && e.ctrlKey && e.altKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       if (!isGitRepo) return;
-      const sessionIndex = worktreeSessions.findIndex(s => s.id === activeWorktreeSessionId);
-      const prevIndex = sessionIndex > 0 ? sessionIndex - 1 : worktreeSessions.length - 1;
-      await switchWorktreeSession(worktreeSessions[prevIndex].id);
+      const projectSessions = worktreeSessions.filter(s => s.projectId === activeProjectId);
+      const sessionIndex = projectSessions.findIndex(s => s.id === activeWorktreeSessionId);
+      const prevIndex = sessionIndex > 0 ? sessionIndex - 1 : projectSessions.length - 1;
+      await switchWorktreeSession(projectSessions[prevIndex].id);
       return;
     }
 
-    // Ctrl+Alt+Right: Switch to next worktree session
+    // Ctrl+Alt+Right: Switch to next worktree session (within current project)
     if (e.key === 'ArrowRight' && e.ctrlKey && e.altKey) {
       e.preventDefault();
       e.stopImmediatePropagation();
       if (!isGitRepo) return;
-      const sessionIndex = worktreeSessions.findIndex(s => s.id === activeWorktreeSessionId);
-      const nextIndex = sessionIndex < worktreeSessions.length - 1 ? sessionIndex + 1 : 0;
-      await switchWorktreeSession(worktreeSessions[nextIndex].id);
+      const projectSessions = worktreeSessions.filter(s => s.projectId === activeProjectId);
+      const sessionIndex = projectSessions.findIndex(s => s.id === activeWorktreeSessionId);
+      const nextIndex = sessionIndex < projectSessions.length - 1 ? sessionIndex + 1 : 0;
+      await switchWorktreeSession(projectSessions[nextIndex].id);
       return;
     }
 
@@ -980,13 +1138,19 @@ function updateStatusBar() {
 
 // Worktree Functions
 
-async function loadWorktrees() {
+async function loadWorktrees(projectId?: string) {
+  const pid = projectId ?? activeProjectId ?? "";
+  const project = projects.find(p => p.id === pid);
+  const startPath = project?.path ?? (currentPath || ".");
+  const otherSessions = worktreeSessions.filter(s => s.projectId !== pid);
+
   try {
-    const repoRoot = await invoke<string>("git_find_repo_root", { startPath: currentPath || "." });
+    const repoRoot = await invoke<string>("git_find_repo_root", { startPath });
     const worktrees = await invoke<WorktreeEntry[]>("git_worktree_list", { repoPath: repoRoot });
 
-    worktreeSessions = worktrees.map(w => ({
+    const projectSessions: WorktreeSession[] = worktrees.map(w => ({
       id: `worktree-${crypto.randomUUID()}`,
+      projectId: pid,
       path: w.path,
       branch: w.branch,
       isMain: w.is_main,
@@ -999,12 +1163,13 @@ async function loadWorktrees() {
 
     isGitRepo = true;
 
-    // If no worktrees found, create default from current dir
-    if (worktreeSessions.length === 0) {
-      worktreeSessions.push({
+    // If no worktrees found, create default from project path
+    if (projectSessions.length === 0) {
+      projectSessions.push({
         id: `worktree-${crypto.randomUUID()}`,
-        path: currentPath,
-        branch: await invoke<string>("git_get_current_branch", { worktreePath: currentPath }),
+        projectId: pid,
+        path: startPath,
+        branch: await invoke<string>("git_get_current_branch", { worktreePath: startPath }),
         isMain: true,
         tabs: [],
         activeTabId: "",
@@ -1014,9 +1179,12 @@ async function loadWorktrees() {
       });
     }
 
-    // Set first worktree as active
-    if (worktreeSessions.length > 0 && !activeWorktreeSessionId) {
-      activeWorktreeSessionId = worktreeSessions[0].id;
+    worktreeSessions = [...otherSessions, ...projectSessions];
+
+    // Set first worktree of this project as active if none is set for this project
+    const currentActive = worktreeSessions.find(s => s.id === activeWorktreeSessionId);
+    if (!currentActive || currentActive.projectId !== pid) {
+      activeWorktreeSessionId = projectSessions[0].id;
     }
 
     renderWorktreeList();
@@ -1025,9 +1193,10 @@ async function loadWorktrees() {
     isGitRepo = false;
 
     // Create default session for non-git repos
-    worktreeSessions = [{
+    const fallback: WorktreeSession = {
       id: `worktree-${crypto.randomUUID()}`,
-      path: currentPath,
+      projectId: pid,
+      path: startPath,
       branch: "",
       isMain: true,
       tabs: [],
@@ -1035,8 +1204,9 @@ async function loadWorktrees() {
       nextTabIndex: 1,
       nextChatIndex: 1,
       isInitialized: false,
-    }];
-    activeWorktreeSessionId = worktreeSessions[0].id;
+    };
+    worktreeSessions = [...otherSessions, fallback];
+    activeWorktreeSessionId = fallback.id;
 
     renderWorktreeList();
   }
@@ -1062,7 +1232,8 @@ function renderWorktreeList() {
 
   worktreeList.innerHTML = "";
 
-  worktreeSessions.forEach(session => {
+  const currentProjectSessions = worktreeSessions.filter(s => s.projectId === activeProjectId);
+  currentProjectSessions.forEach(session => {
     const isActive = session.id === activeWorktreeSessionId;
     const item = document.createElement("div");
     item.className = `worktree-item${isActive ? " active" : ""}${session.branch === "detached HEAD" ? " worktree-item-detached" : ""}`;
@@ -1070,13 +1241,24 @@ function renderWorktreeList() {
     const branchDisplay = session.branch === "detached HEAD" ? "detached HEAD" : session.branch;
     const tabCount = session.tabs.length;
 
+    const deleteBtn = !session.isMain
+      ? `<button class="worktree-delete-btn" data-session-id="${session.id}" title="Remove worktree (git worktree remove)" aria-label="Remove worktree">` +
+        `<svg width="9" height="9" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` +
+        `</button>`
+      : '';
+
     item.innerHTML = `
       <span class="worktree-branch-icon">${ICON_BRANCH}</span>
       <span class="worktree-branch">${escapeHtml(branchDisplay)}</span>
       ${tabCount > 0 ? `<span class="worktree-tab-count">${tabCount}</span>` : ''}
+      ${deleteBtn}
     `;
 
-    item.addEventListener("click", () => switchWorktreeSession(session.id));
+    item.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest(".worktree-delete-btn")) return;
+      switchWorktreeSession(session.id);
+    });
     worktreeList.appendChild(item);
   });
 }
@@ -1128,6 +1310,7 @@ async function createWorktreeSession(branch: string, customPath?: string) {
 
     const newSession: WorktreeSession = {
       id: `worktree-${crypto.randomUUID()}`,
+      projectId: activeProjectId ?? "",
       path: worktreePath,
       branch: newBranch,
       isMain: false,
@@ -1156,8 +1339,41 @@ async function createWorktreeSession(branch: string, customPath?: string) {
   }
 }
 
+async function deleteWorktreeSession(sessionId: string) {
+  const session = worktreeSessions.find(s => s.id === sessionId);
+  if (!session || session.isMain) return;
+
+  const branchLabel = session.branch === "detached HEAD" ? "detached HEAD" : session.branch;
+  if (!confirm(`Remove worktree "${branchLabel}" at ${session.path}?`)) return;
+
+  try {
+    const repoRoot = await invoke<string>("git_find_repo_root", { startPath: session.path });
+    await invoke("git_worktree_remove", {
+      repoPath: repoRoot,
+      worktreePath: session.path,
+      force: false,
+    });
+
+    const index = worktreeSessions.findIndex(s => s.id === sessionId);
+    if (index !== -1) worktreeSessions.splice(index, 1);
+
+    if (activeWorktreeSessionId === sessionId) {
+      // Switch to another session in the same project, or the first available
+      const projectSessions = worktreeSessions.filter(s => s.projectId === activeProjectId);
+      if (projectSessions.length > 0) {
+        await switchWorktreeSession(projectSessions[0].id);
+      }
+    }
+
+    renderWorktreeList();
+  } catch (error) {
+    console.error("Failed to remove worktree:", error);
+    alert(`Failed to remove worktree: ${error}`);
+  }
+}
+
 async function initWorktreeSessions() {
-  await loadWorktrees();
+  await loadWorktrees(activeProjectId ?? undefined);
 
   // Initialize first tab for active session
   const session = getActiveWorktreeSession();
@@ -1308,7 +1524,7 @@ async function createChatTab() {
     await initOpenCodeClient();
     console.log("OpenCode client initialized, creating session on port:", opencodeServerPort);
 
-    const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session`, {
+    const resp = await fetch(`http://127.0.0.1:${opencodeServerPort}/session?directory=${encodeURIComponent(currentPath)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -1556,6 +1772,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     const cwd: string = await invoke("get_current_dir");
     currentPath = cwd;
 
+    // Initialize projects (must come before worktree init)
+    await initProjects();
+    renderProjectList();
+
     // Initialize worktree sessions
     await initWorktreeSessions();
 
@@ -1568,6 +1788,14 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     document.getElementById("refresh-worktrees-btn")?.addEventListener("click", () => {
       loadWorktrees();
+    });
+
+    document.getElementById("worktree-list")?.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest(".worktree-delete-btn") as HTMLElement | null;
+      if (btn) {
+        const sessionId = btn.dataset.sessionId;
+        if (sessionId) deleteWorktreeSession(sessionId);
+      }
     });
 
     const closeModal = () => {
@@ -1619,6 +1847,83 @@ window.addEventListener("DOMContentLoaded", async () => {
           : 'git worktree add -b feat/…';
       });
     }
+
+    // Project event listeners
+    document.getElementById("new-project-btn")?.addEventListener("click", () => {
+      const modal = document.getElementById("project-modal");
+      if (modal) modal.style.display = "flex";
+      const nameInput = document.getElementById("project-name-input") as HTMLInputElement;
+      if (nameInput) nameInput.value = "";
+      const pathInput = document.getElementById("project-path-input") as HTMLInputElement;
+      if (pathInput) { pathInput.value = ""; pathInput.focus(); }
+      const errorEl = document.getElementById("project-modal-error");
+      if (errorEl) errorEl.style.display = "none";
+    });
+
+    const closeProjectModal = () => {
+      const modal = document.getElementById("project-modal");
+      if (modal) modal.style.display = "none";
+    };
+
+    document.getElementById("project-modal-cancel")?.addEventListener("click", closeProjectModal);
+    document.getElementById("project-modal-close")?.addEventListener("click", closeProjectModal);
+
+    // Auto-fill name from path's last segment
+    const projectPathInputEl = document.getElementById("project-path-input") as HTMLInputElement | null;
+    const projectNameInputEl = document.getElementById("project-name-input") as HTMLInputElement | null;
+    if (projectPathInputEl && projectNameInputEl) {
+      projectPathInputEl.addEventListener("input", async () => {
+        let val = projectPathInputEl.value.trim();
+        if (val.startsWith("~/")) {
+          const home = await invoke<string>("get_home_dir");
+          val = home + val.slice(1);
+          projectPathInputEl.value = val;
+        } else if (val === "~") {
+          const home = await invoke<string>("get_home_dir");
+          val = home;
+          projectPathInputEl.value = val;
+        }
+        const segment = val.split("/").filter(Boolean).pop() || "";
+        if (segment) projectNameInputEl.value = segment;
+      });
+    }
+
+    document.getElementById("project-modal-create")?.addEventListener("click", async () => {
+      const nameInput = document.getElementById("project-name-input") as HTMLInputElement;
+      const pathInput = document.getElementById("project-path-input") as HTMLInputElement;
+      const errorEl = document.getElementById("project-modal-error");
+      const name = nameInput?.value.trim();
+      let path = pathInput?.value.trim() ?? "";
+
+      // Expand ~ as a safety net in case the input handler didn't fire
+      if (path.startsWith("~/")) {
+        const home = await invoke<string>("get_home_dir");
+        path = home + path.slice(1);
+      } else if (path === "~") {
+        path = await invoke<string>("get_home_dir");
+      }
+
+      if (!name || !path) {
+        if (errorEl) { errorEl.textContent = "Please enter a name and path."; errorEl.style.display = "block"; }
+        return;
+      }
+
+      if (errorEl) errorEl.style.display = "none";
+      await createProject(name, path);
+      closeProjectModal();
+    });
+
+    document.getElementById("project-list")?.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest(".project-delete-btn") as HTMLElement | null;
+      if (btn) {
+        const projectId = btn.dataset.projectId;
+        if (projectId) {
+          const project = projects.find(p => p.id === projectId);
+          if (project && !confirm(`Remove project "${project.name}"? This does not delete the directory.`)) return;
+          deleteProject(projectId);
+        }
+      }
+    });
 
     document.querySelector(".new-tab")?.addEventListener("click", () => createTab(false));
     document.querySelector(".new-chat")?.addEventListener("click", () => createChatTab());

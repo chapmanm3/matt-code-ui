@@ -26,6 +26,27 @@
           </button>
         </div>
 
+        <!-- Projects section -->
+        <aside id="project-sidebar" class="project-sidebar collapsible-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">projects</span>
+            <div style="flex:1;height:1px;background:var(--border);margin-left:4px;"></div>
+            <button id="new-project-btn" class="icon-btn" title="Add Project" aria-label="Add project">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button class="collapse-btn" data-target="project-sidebar" title="Toggle Projects" aria-expanded="true" aria-label="Toggle project browser">
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                <path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="sidebar-content">
+            <div id="project-list" class="project-list"></div>
+          </div>
+        </aside>
+
         <!-- Files section -->
         <aside id="sidebar" class="collapsible-sidebar">
           <div class="sidebar-header">
@@ -187,6 +208,56 @@
               </svg>
             </span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Project modal -->
+    <div id="project-modal" class="modal-overlay" style="display:none">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-header-icon">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+              <path d="M1.5 4.5A1 1 0 012.5 3.5h3.086a1 1 0 01.707.293L7.5 5h3a1 1 0 011 1v4a1 1 0 01-1 1h-8a1 1 0 01-1-1V4.5z" fill="currentColor" fill-opacity="0.65"/>
+            </svg>
+          </span>
+          <div class="modal-header-text">
+            <div class="modal-title">Add project</div>
+            <div class="modal-subtitle">open a local directory as a project</div>
+          </div>
+          <button id="project-modal-close" class="modal-close" aria-label="Close">
+            <svg width="9" height="9" viewBox="0 0 12 12">
+              <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <div class="form-label">
+              <span class="form-label-text">path</span>
+              <span class="form-label-hint">absolute path to directory</span>
+            </div>
+            <div class="form-field">
+              <input id="project-path-input" type="text" placeholder="/home/user/my-project" autofocus>
+            </div>
+          </div>
+          <div class="form-group">
+            <div class="form-label">
+              <span class="form-label-text">name</span>
+            </div>
+            <div class="form-field">
+              <input id="project-name-input" type="text" placeholder="my-project">
+            </div>
+          </div>
+        </div>
+
+        <div id="project-modal-error" class="modal-error" style="display:none"></div>
+
+        <div class="modal-footer">
+          <span class="modal-footer-cmd"></span>
+          <button id="project-modal-cancel" class="modal-cancel">Cancel</button>
+          <button id="project-modal-create" class="modal-create">Add</button>
         </div>
       </div>
     </div>

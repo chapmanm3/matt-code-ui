@@ -48,10 +48,21 @@ fn default_prev_tab() -> String { "Alt+Shift+Tab".to_string() }
 fn default_new_terminal() -> String { "Alt+T".to_string() }
 fn default_close_terminal() -> String { "Alt+W".to_string() }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PersistedProject {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
     #[serde(default)]
     pub keybinds: Keybinds,
+    #[serde(default)]
+    pub projects: Vec<PersistedProject>,
+    #[serde(default)]
+    pub active_project_id: Option<String>,
 }
 
 struct OpenCodeServerState {
@@ -634,7 +645,29 @@ fn close_terminal(state: State<'_, TerminalStateHandle>, session_id: String) -> 
 }
 
 #[tauri::command]
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(&path[2..]).to_string_lossy().to_string();
+        }
+    } else if path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home.to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
+}
+
+#[tauri::command]
+fn get_home_dir() -> Result<String, String> {
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "Could not determine home directory".to_string())
+}
+
+#[tauri::command]
 fn git_find_repo_root(start_path: String) -> Result<String, String> {
+    let start_path = expand_tilde(&start_path);
     let mut current = std::path::Path::new(&start_path).to_path_buf();
     loop {
         let git_path = current.join(".git");
@@ -648,24 +681,17 @@ fn git_find_repo_root(start_path: String) -> Result<String, String> {
     Err("Not a git repository".to_string())
 }
 
-fn parse_worktree_list(output: &str, repo_root: &str) -> Vec<WorktreeEntry> {
+fn parse_worktree_list(output: &str) -> Vec<WorktreeEntry> {
     let mut entries = Vec::new();
     let mut current_path: Option<String> = None;
     let mut current_branch: Option<String> = None;
 
-    // Check if repo_root itself is the main worktree (has .git directory, not file)
-    let is_main_worktree = std::path::Path::new(repo_root).join(".git").is_dir();
-
     for line in output.lines() {
         if line.starts_with("worktree ") {
-            // Save previous entry if exists
             if let Some(path) = current_path.take() {
                 let branch = current_branch.take().unwrap_or_else(|| "detached HEAD".to_string());
-                entries.push(WorktreeEntry {
-                    path: path.clone(),
-                    branch,
-                    is_main: is_main_worktree && path == repo_root,
-                });
+                let is_main = std::path::Path::new(&path).join(".git").is_dir();
+                entries.push(WorktreeEntry { path, branch, is_main });
             }
             current_path = Some(line[9..].to_string());
         } else if line.starts_with("branch ") {
@@ -675,14 +701,10 @@ fn parse_worktree_list(output: &str, repo_root: &str) -> Vec<WorktreeEntry> {
         }
     }
 
-    // Don't forget the last entry
     if let Some(path) = current_path {
         let branch = current_branch.unwrap_or_else(|| "detached HEAD".to_string());
-        entries.push(WorktreeEntry {
-            path: path.clone(),
-            branch,
-            is_main: is_main_worktree && path == repo_root,
-        });
+        let is_main = std::path::Path::new(&path).join(".git").is_dir();
+        entries.push(WorktreeEntry { path, branch, is_main });
     }
 
     // Sort: main first, then by branch name
@@ -717,7 +739,7 @@ fn git_worktree_list(repo_path: String) -> Result<Vec<WorktreeEntry>, String> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_worktree_list(&stdout, &repo_path))
+    Ok(parse_worktree_list(&stdout))
 }
 
 #[tauri::command]
@@ -747,6 +769,30 @@ fn git_worktree_add(
     if !output.status.success() {
         return Err(format!(
             "git worktree add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn git_worktree_remove(repo_path: String, worktree_path: String, force: bool) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("worktree").arg("remove");
+    if force {
+        cmd.arg("--force");
+    }
+    cmd.arg(&worktree_path);
+
+    let output = cmd
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git worktree remove: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "git worktree remove failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
@@ -805,9 +851,11 @@ pub fn run() {
             start_opencode_server,
             stop_opencode_server,
             get_opencode_server_status,
+            get_home_dir,
             git_find_repo_root,
             git_worktree_list,
             git_worktree_add,
+            git_worktree_remove,
             git_get_current_branch,
         ])
         .run(tauri::generate_context!())
