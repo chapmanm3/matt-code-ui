@@ -1868,23 +1868,153 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("project-modal-cancel")?.addEventListener("click", closeProjectModal);
     document.getElementById("project-modal-close")?.addEventListener("click", closeProjectModal);
 
-    // Auto-fill name from path's last segment
+    // Auto-fill name + path autocomplete dropdown
     const projectPathInputEl = document.getElementById("project-path-input") as HTMLInputElement | null;
     const projectNameInputEl = document.getElementById("project-name-input") as HTMLInputElement | null;
-    if (projectPathInputEl && projectNameInputEl) {
-      projectPathInputEl.addEventListener("input", async () => {
-        let val = projectPathInputEl.value.trim();
-        if (val.startsWith("~/")) {
-          const home = await invoke<string>("get_home_dir");
-          val = home + val.slice(1);
-          projectPathInputEl.value = val;
-        } else if (val === "~") {
-          const home = await invoke<string>("get_home_dir");
-          val = home;
-          projectPathInputEl.value = val;
+    const pathSuggestionsEl = document.getElementById("path-suggestions") as HTMLDivElement | null;
+
+    let suggestionDebounce: number | null = null;
+    let activeSuggestionIndex = -1;
+    let currentSuggestions: string[] = [];
+
+    function hideSuggestions() {
+      if (pathSuggestionsEl) pathSuggestionsEl.style.display = "none";
+      activeSuggestionIndex = -1;
+      currentSuggestions = [];
+    }
+
+    function renderSuggestions(suggestions: string[], prefix: string) {
+      if (!pathSuggestionsEl) return;
+      if (suggestions.length === 0) { hideSuggestions(); return; }
+
+      currentSuggestions = suggestions;
+      activeSuggestionIndex = -1;
+      pathSuggestionsEl.innerHTML = "";
+
+      suggestions.forEach((fullPath, i) => {
+        const name = fullPath.split("/").pop() || fullPath;
+        const item = document.createElement("div");
+        item.className = "path-suggestion-item";
+        item.dataset.index = String(i);
+
+        // Highlight the matched prefix within the name
+        const matchLen = prefix.length;
+        const matchedPart = name.slice(0, matchLen);
+        const restPart = name.slice(matchLen);
+        item.innerHTML =
+          `<span class="suggestion-icon">${ICON_FOLDER}</span>` +
+          `<span class="suggestion-match">${escapeHtml(matchedPart)}</span>` +
+          `<span class="suggestion-rest">${escapeHtml(restPart)}</span>`;
+
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault(); // don't blur the input
+          selectSuggestion(fullPath);
+        });
+        pathSuggestionsEl.appendChild(item);
+      });
+
+      pathSuggestionsEl.style.display = "block";
+    }
+
+    function setActiveSuggestion(index: number) {
+      if (!pathSuggestionsEl) return;
+      const items = pathSuggestionsEl.querySelectorAll<HTMLElement>(".path-suggestion-item");
+      items.forEach(el => el.classList.remove("active"));
+      activeSuggestionIndex = index;
+      if (index >= 0 && index < items.length) {
+        items[index].classList.add("active");
+        items[index].scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    async function selectSuggestion(fullPath: string) {
+      if (!projectPathInputEl || !projectNameInputEl) return;
+      // Append trailing slash so the user can keep drilling down
+      projectPathInputEl.value = fullPath + "/";
+      const segment = fullPath.split("/").filter(Boolean).pop() || "";
+      if (segment) projectNameInputEl.value = segment;
+      hideSuggestions();
+      // Immediately trigger suggestions for the new value
+      await fetchSuggestions(fullPath + "/");
+    }
+
+    async function fetchSuggestions(rawVal: string) {
+      if (!projectPathInputEl || !pathSuggestionsEl) return;
+
+      let val = rawVal;
+
+      // Expand ~ on input
+      if (val.startsWith("~/")) {
+        const home = await invoke<string>("get_home_dir");
+        val = home + val.slice(1);
+        projectPathInputEl.value = val;
+      } else if (val === "~") {
+        const home = await invoke<string>("get_home_dir");
+        val = home + "/";
+        projectPathInputEl.value = val;
+      }
+
+      // Auto-fill name
+      const nameSegment = val.replace(/\/$/, "").split("/").filter(Boolean).pop() || "";
+      if (nameSegment && projectNameInputEl) projectNameInputEl.value = nameSegment;
+
+      if (!val || val === "/") { hideSuggestions(); return; }
+
+      // Determine the directory to list and the prefix to filter by
+      let parentDir: string;
+      let prefix: string;
+      if (val.endsWith("/")) {
+        parentDir = val;
+        prefix = "";
+      } else {
+        const lastSlash = val.lastIndexOf("/");
+        parentDir = lastSlash >= 0 ? val.slice(0, lastSlash + 1) : "/";
+        prefix = lastSlash >= 0 ? val.slice(lastSlash + 1) : val;
+      }
+
+      try {
+        const entries: FileEntry[] = await invoke("read_directory", { path: parentDir });
+        const dirs = entries
+          .filter(e => e.is_dir && e.name.toLowerCase().startsWith(prefix.toLowerCase()))
+          .slice(0, 10)
+          .map(e => e.path);
+        renderSuggestions(dirs, prefix);
+      } catch {
+        hideSuggestions();
+      }
+    }
+
+    if (projectPathInputEl && projectNameInputEl && pathSuggestionsEl) {
+      projectPathInputEl.addEventListener("input", () => {
+        if (suggestionDebounce) clearTimeout(suggestionDebounce);
+        suggestionDebounce = window.setTimeout(() => {
+          fetchSuggestions(projectPathInputEl.value);
+        }, 150);
+      });
+
+      projectPathInputEl.addEventListener("keydown", (e) => {
+        if (pathSuggestionsEl.style.display === "none") return;
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setActiveSuggestion(Math.min(activeSuggestionIndex + 1, currentSuggestions.length - 1));
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setActiveSuggestion(Math.max(activeSuggestionIndex - 1, 0));
+        } else if (e.key === "Enter" || e.key === "Tab") {
+          if (activeSuggestionIndex >= 0 && currentSuggestions[activeSuggestionIndex]) {
+            e.preventDefault();
+            selectSuggestion(currentSuggestions[activeSuggestionIndex]);
+          } else {
+            hideSuggestions();
+          }
+        } else if (e.key === "Escape") {
+          hideSuggestions();
         }
-        const segment = val.split("/").filter(Boolean).pop() || "";
-        if (segment) projectNameInputEl.value = segment;
+      });
+
+      projectPathInputEl.addEventListener("blur", () => {
+        // Small delay so mousedown on suggestion fires first
+        setTimeout(hideSuggestions, 150);
       });
     }
 

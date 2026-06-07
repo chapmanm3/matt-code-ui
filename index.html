@@ -238,8 +238,11 @@
               <span class="form-label-text">path</span>
               <span class="form-label-hint">absolute path to directory</span>
             </div>
-            <div class="form-field">
-              <input id="project-path-input" type="text" placeholder="/home/user/my-project" autofocus>
+            <div class="form-field-wrap">
+              <div class="form-field">
+                <input id="project-path-input" type="text" placeholder="/home/user/my-project" autofocus autocomplete="off">
+              </div>
+              <div id="path-suggestions" class="path-suggestions" style="display:none"></div>
             </div>
           </div>
           <div class="form-group">

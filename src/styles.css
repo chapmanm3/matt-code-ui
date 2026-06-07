@@ -1487,6 +1487,57 @@ html, body {
   font-size: 12px;
 }
 
+.form-field-wrap {
+  position: relative;
+}
+
+.path-suggestions {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  background: var(--bg-elevated, #13161d);
+  border: 1px solid var(--border-hi, #2a2d38);
+  border-radius: 5px;
+  max-height: 180px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+}
+
+.path-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.path-suggestion-item:hover,
+.path-suggestion-item.active {
+  background: var(--bg-hi, #1e2130);
+}
+
+.path-suggestion-item .suggestion-icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.path-suggestion-item .suggestion-match {
+  color: var(--text);
+}
+
+.path-suggestion-item .suggestion-rest {
+  color: var(--text-dim);
+}
+
 /* ── Scrollbars ──────────────────────────────────────────── */
 
 .file-list::-webkit-scrollbar,
